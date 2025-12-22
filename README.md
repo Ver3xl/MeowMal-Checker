@@ -101,7 +101,6 @@ Results are saved in the `results/` folder, organized by date and time:
 - `Hits.txt`: Valid accounts.
 - `Capture.txt`: Detailed capture information (Ranks, Coins, Bans, etc.).
 - `Banned.txt`: Accounts banned on Hypixel.
-- `SFA_MFA.txt`: Accounts with 2FA/MFA enabled.
 
 ---
 
