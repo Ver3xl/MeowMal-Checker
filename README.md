@@ -38,7 +38,7 @@ MeowMal Checker is a powerful, multi-threaded tool designed to validate and capt
 
 ### ⚙️ **Core Features**
 - **Multi-threaded**: Blazing fast checking with configurable thread count.
-- **Proxy Support**: Supports HTTP, SOCKS4, and SOCKS5 proxies (User:Pass or IP:Port).
+- **Proxy Support**: Supports HTTP, SOCKS4, and SOCKS5 proxies (User:Pass or IP:Port and more).
 - **Discord Webhook**: Sends beautiful, customizable embeds for hits directly to your Discord server.
 - **Retry Logic**: Robust handling of network errors and ratelimits with auto-retry.
 - **Configurable**: extensive `config.ini` to tweak every aspect of the checker.
