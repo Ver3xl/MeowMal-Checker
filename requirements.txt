@@ -1,0 +1,6 @@
+requests
+readchar
+PySocks
+urllib3
+colorama
+pyCraft
