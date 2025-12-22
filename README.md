@@ -49,7 +49,7 @@ MeowMal Checker is a powerful, multi-threaded tool designed to validate and capt
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/MeowMal-Checker.git
+   git clone https://github.com/Ver3xl/MeowMal-Checker.git
    cd MeowMal-Checker
    ```
 
