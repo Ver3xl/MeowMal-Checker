@@ -1449,6 +1449,10 @@ class Capture:
                     original_stderr = sys.stderr
                     sys.stderr = StringIO()
                     try:
+                        def _suppress_errors(exc, exc_info):
+                            if "10053" in str(exc) or isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+                                pass
+                        connection._handle_exception = _suppress_errors
                         connection.connect()
                         c = 0
                         while self.banned == None and c < 2000:
