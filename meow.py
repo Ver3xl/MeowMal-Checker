@@ -371,7 +371,7 @@ class UIManager:
         if not getattr(self, 'log_initialized', False):
             self.clear_screen()
             _title = Fore.CYAN
-            ascii_logo = '   __  __                    __  __       _ \n  |  \\/  |                  |  \\/  |     | | ' + '\n  | \\  / | ___  _____      _| \\  / | __ _| | ' + '\n  | |\\/| |/ _ \\/ _ \\ \\ /\\ / / |\\/| |/ _` | | ' + '\n  | |  | |  __/ (_) \\ V  V /| |  | | (_| | | ' + '\n  |_|  |_|\\___|\\___/ \\_/\\_/ |_|  |_|\\__,_|_| ' + "\n  Version: O.5 | Dev: MeowMal Dev's \n"
+            ascii_logo = '   __  __                    __  __       _ \n  |  \\/  |                  |  \\/  |     | | ' + '\n  | \\  / | ___  _____      _| \\  / | __ _| | ' + '\n  | |\\/| |/ _ \\/ _ \\ \\ /\\ / / |\\/| |/ _` | | ' + '\n  | |  | |  __/ (_) \\ V  V /| |  | | (_| | | ' + '\n  |_|  |_|\\___|\\___/ \\_/\\_/ |_|  |_|\\__,_|_| ' + "\n  Version: O.6 | Dev: MeowMal Dev's \n"
             print(Fore.CYAN + ascii_logo + Style.RESET_ALL)
             print('')
             print(f'{_title}Live Logs{Style.RESET_ALL}' + ' ' * max(0, getattr(self, 'width', 120) - len(self._strip_ansi('Live Logs'))))
@@ -960,17 +960,7 @@ class Capture:
         self.ms_payment_methods = []
         self.inbox_matches = []
 
-    def builder(self, mask_password=False):
-        import time
-        from datetime import datetime
-        if hasattr(ui, 'start_time') and ui.start_time:
-            elapsed = time.time() - ui.start_time
-            hours = int(elapsed // 3600)
-            minutes = int(elapsed % 3600 // 60)
-            seconds = int(elapsed % 60)
-            elapsed_time = f'{hours:02d}:{minutes:02d}:{seconds:02d}'
-        else:
-            elapsed_time = '00:00:00'
+    def builder(self, mask_password=False, include_timestamp=False):
         if self.banned and self.banned != 'False':
             ban_status = '[Banned]'
         else:
@@ -1025,8 +1015,23 @@ class Capture:
             stats_parts.append(f'Pit_Coins: {self.pitcoins}')
         tags_str = ''.join(tags)
         stats_str = ' '.join(stats_parts) if stats_parts else ''
-        sep = ' | ' if mask_password else ':'
-        capture_line = f'[{elapsed_time}] {ban_status}{tags_str}{hypixel_level} {self.email}:{password_display}{sep}{self.name}'
+        
+        user_display = self.name if self.name and self.name != 'N/A' else 'Unknown'
+        capture_line = f'[{user_display}] {ban_status} {tags_str}{hypixel_level} {self.email}:{password_display}'
+        
+        if include_timestamp:
+            import time
+            from datetime import datetime
+            if hasattr(ui, 'start_time') and ui.start_time:
+                elapsed = time.time() - ui.start_time
+                hours = int(elapsed // 3600)
+                minutes = int(elapsed % 3600 // 60)
+                seconds = int(elapsed % 60)
+                elapsed_time = f'[{hours:02d}:{minutes:02d}:{seconds:02d}]'
+            else:
+                elapsed_time = '[00:00:00]'
+            capture_line = f'{elapsed_time} {capture_line}'
+
         if stats_str:
             capture_line += f' | {stats_str}'
         return capture_line
@@ -1338,50 +1343,51 @@ class Capture:
                 def login_disconnect(packet):
                     try:
                         data = json.loads(str(packet.json_data))
-                        
-                        def get_text_safe(index):
+                        data_str = str(data)
+
+                        if 'temporarily banned' in data_str:
                             try:
-                                return data['extra'][index]['text'].strip()
-                            except (IndexError, KeyError, TypeError):
-                                return "?"
-
-                        extra_list = data.get('extra', [])
-                        full_msg = "".join([x.get('text', '') for x in extra_list if isinstance(x, dict)])
-
-                        if 'temporarily banned' in full_msg:
-                            duration = get_text_safe(4)
-                            ban_id = get_text_safe(8)
-                            self.banned = f"[{get_text_safe(1)}] {duration} Ban ID: {ban_id}"
+                                duration = data['extra'][4]['text'].strip()
+                                ban_id = data['extra'][8]['text'].strip()
+                                self.banned = f"[{data['extra'][1]['text']}] {duration} Ban ID: {ban_id}"
+                            except:
+                                self.banned = "Temporarily Banned"
                             with open(f'results/{fname}/Banned.txt', 'a') as f:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('banned')
                         
-                        elif 'Suspicious activity' in full_msg:
-                            ban_id = get_text_safe(6)
-                            self.banned = f"[Permanently] Suspicious activity has been detected on your account. Ban ID: {ban_id}"
+                        elif 'Suspicious activity' in data_str:
+                            try:
+                                ban_id = data['extra'][6]['text'].strip()
+                                self.banned = f"[Permanently] Suspicious activity has been detected on your account. Ban ID: {ban_id}"
+                            except:
+                                self.banned = "[Permanently] Suspicious activity"
                             with open(f'results/{fname}/Banned.txt', 'a') as f:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('banned')
                                 
-                        elif 'You are permanently banned from this server!' in full_msg:
-                            reason = get_text_safe(2)
-                            ban_id = get_text_safe(6)
-                            self.banned = f"[Permanently] {reason} Ban ID: {ban_id}"
+                        elif 'You are permanently banned from this server!' in data_str:
+                            try:
+                                reason = data['extra'][2]['text'].strip()
+                                ban_id = data['extra'][6]['text'].strip()
+                                self.banned = f"[Permanently] {reason} Ban ID: {ban_id}"
+                            except:
+                                self.banned = "[Permanently] Banned"
                             with open(f'results/{fname}/Banned.txt', 'a') as f:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('banned')
 
-                        elif 'The Hypixel Alpha server is currently closed!' in full_msg:
+                        elif 'The Hypixel Alpha server is currently closed!' in data_str:
                             self.banned = 'False'
                             with open(f'results/{fname}/Unbanned.txt', 'a') as f:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('unbanned')
 
-                        elif 'Failed cloning your SkyBlock data' in full_msg:
+                        elif 'Failed cloning your SkyBlock data' in data_str:
                             self.banned = 'False'
                             with open(f'results/{fname}/Unbanned.txt', 'a') as f:
                                 f.write(f'{self.email}:{self.password}\n')
@@ -1389,7 +1395,13 @@ class Capture:
                                 ui.increment_stat('unbanned')
 
                         else:
-                            self.banned = full_msg
+                                                                                                                
+                            extra_list = data.get('extra', [])
+                            full_msg = "".join([x.get('text', '') for x in extra_list if isinstance(x, dict)])
+                            if not full_msg:
+                                full_msg = data.get('text', '')
+                            
+                            self.banned = full_msg if full_msg else str(data)
                             with open(f'results/{fname}/Banned.txt', 'a') as f:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
@@ -1695,8 +1707,8 @@ class Capture:
                 if UI_ENABLED and ui:
                      ui.log_error(f"Setskin error: {e}")
         try:
-            fullcapt = self.builder(mask_password=False)
-            masked_capt = self.builder(mask_password=True)
+            fullcapt = self.builder(mask_password=False, include_timestamp=False)
+            masked_capt = self.builder(mask_password=True, include_timestamp=True)
         except Exception as e:
             if UI_ENABLED and ui:
                 ui.log_error(f"Builder error: {e}")
