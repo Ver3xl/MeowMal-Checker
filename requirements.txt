@@ -3,4 +3,6 @@ readchar
 PySocks
 urllib3
 colorama
-pyCraft
+git+https://github.com/ammaraskar/pyCraft.git
+
+
