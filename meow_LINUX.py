@@ -1674,7 +1674,7 @@ class Capture:
                             connection.connect()
                         
                         c = 0
-                        while self.banned == None or c < 1000:
+                        while self.banned == None and c < 1000:
                             time.sleep(0.01)
                             c += 1
                         connection.disconnect()
