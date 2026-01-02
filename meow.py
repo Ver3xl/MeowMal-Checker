@@ -1682,7 +1682,7 @@ class Capture:
 
                         connected = True
                         c = 0
-                        while self.banned == None or c < 3000:
+                        while self.banned == None and c < 3000:
                             time.sleep(0.01)
                             c += 1
                         connection.disconnect()
