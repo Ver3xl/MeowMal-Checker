@@ -356,7 +356,7 @@ class UIManager:
         if not getattr(self, 'log_initialized', False):
             self.clear_screen()
             _title = Fore.CYAN
-            ascii_logo = '   __  __                    __  __       _ \n  |  \\/  |                  |  \\/  |     | | ' + '\n  | \\  / | ___  _____      _| \\  / | __ _| | ' + '\n  | |\\/| |/ _ \\/ _ \\ \\ /\\ / / |\\/| |/ _` | | ' + '\n  | |  | |  __/ (_) \\ V  V /| |  | | (_| | | ' + '\n  |_|  |_|\\___|\\___/ \\_/\\_/ |_|  |_|\\__,_|_| ' + "\n  Version: O.7 | Dev: MeowMal Dev's \n"
+            ascii_logo = '   __  __                    __  __       _ \n  |  \\/  |                  |  \\/  |     | | ' + '\n  | \\  / | ___  _____      _| \\  / | __ _| | ' + '\n  | |\\/| |/ _ \\/ _ \\ \\ /\\ / / |\\/| |/ _` | | ' + '\n  | |  | |  __/ (_) \\ V  V /| |  | | (_| | | ' + '\n  |_|  |_|\\___|\\___/ \\_/\\_/ |_|  |_|\\__,_|_| ' + "\n  Version: O.8 | Dev: MeowMal Dev's \n"
             print(Fore.CYAN + ascii_logo + Style.RESET_ALL)
             print('')
             print(f'{_title}Live Logs{Style.RESET_ALL}' + ' ' * max(0, getattr(self, 'width', 120) - len(self._strip_ansi('Live Logs'))))
@@ -1593,6 +1593,12 @@ class Capture:
                             except:
                                  pass
                             return
+                        if 'multiplayer.access.banned' in error_str or (MINECRAFT_AVAILABLE and isinstance(e, YggdrasilError)):
+                             try:
+                                 self.banned = f"[Ban] {error_str}"
+                             except:
+                                 pass
+                             return
                     except:
                         pass
                     original_handle_exception(e, exc_info)
